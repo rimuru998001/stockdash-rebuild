@@ -426,12 +426,6 @@ async function fetchYahooRevenueData(symbol: string) {
         .replace(/<[^>]+>/g, " ")
         .replace(/\s+/g, " ");
 
-      /*
-        Yahoo 營收頁常見欄位順序：
-        年月 當月營收 月增率 去年同月營收 年增率 累計營收 去年累計營收 累計年增率
-        例：
-        2026/03 10,536,851 47.09% 3,743,335 181.48% 26,112,058 9,907,514 163.76%
-      */
       const rowRegex =
         /(\d{4}\/\d{2})\s+([\d,]+)\s+(-?[\d.]+)%\s+([\d,]+)\s+(-?[\d.]+)%\s+([\d,]+)\s+([\d,]+)\s+(-?[\d.]+)%/g;
 
@@ -503,6 +497,22 @@ async function fetchRevenueData(symbol: string) {
     throw new Error("只支援台股數字代號，例如 2330、3260");
   }
 
+  const debug: Array<Record<string, unknown>> = [];
+
+  // 第一優先：Yahoo 營收頁
+  const yahooFallback = await fetchYahooRevenueData(clean);
+
+  if (yahooFallback?.result) {
+    debug.push(yahooFallback.debugItem);
+
+    return {
+      result: yahooFallback.result,
+      history: yahooFallback.history,
+      debug,
+    };
+  }
+
+  // 第二優先：TWSE OpenAPI 備援
   const sources = [
     {
       name: "TWSE_MOPS_MONTHLY_REVENUE_L",
@@ -513,8 +523,6 @@ async function fetchRevenueData(symbol: string) {
       url: "https://openapi.twse.com.tw/v1/opendata/t187ap15_L",
     },
   ];
-
-  const debug: Array<Record<string, unknown>> = [];
 
   for (const source of sources) {
     try {
@@ -550,18 +558,6 @@ async function fetchRevenueData(symbol: string) {
     }
   }
 
-  const yahooFallback = await fetchYahooRevenueData(clean);
-
-  if (yahooFallback?.result) {
-    debug.push(yahooFallback.debugItem);
-
-    return {
-      result: yahooFallback.result,
-      history: yahooFallback.history,
-      debug,
-    };
-  }
-
   return {
     result: null,
     history: [],
@@ -595,7 +591,7 @@ Deno.serve(async (req: Request) => {
       return new Response(
         JSON.stringify({
           success: false,
-          functionVersion: "revenue-data-v2",
+          functionVersion: "revenue-data-v3-yahoo-first",
           message: "請提供 symbol，例如 ?symbol=2330",
         }),
         {
@@ -611,7 +607,7 @@ Deno.serve(async (req: Request) => {
       return new Response(
         JSON.stringify({
           success: false,
-          functionVersion: "revenue-data-v2",
+          functionVersion: "revenue-data-v3-yahoo-first",
           inputSymbol,
           message: "查無營收資料",
           revenue: null,
@@ -628,7 +624,7 @@ Deno.serve(async (req: Request) => {
     return new Response(
       JSON.stringify({
         success: true,
-        functionVersion: "revenue-data-v2",
+        functionVersion: "revenue-data-v3-yahoo-first",
         inputSymbol,
         revenue: data.result,
         history: data.history,
@@ -643,7 +639,7 @@ Deno.serve(async (req: Request) => {
     return new Response(
       JSON.stringify({
         success: false,
-        functionVersion: "revenue-data-v2",
+        functionVersion: "revenue-data-v3-yahoo-first",
         message: "get-revenue-data Edge Function error",
         error: error instanceof Error ? error.message : String(error),
       }),
