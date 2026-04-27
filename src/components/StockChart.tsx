@@ -118,10 +118,7 @@ export function StockChart({ candles }: { candles: Candle[] }) {
     const volumeData = sorted.map((c) => ({
       time: toTime(c.time),
       value: c.volume,
-      color:
-        c.close >= c.open
-          ? "rgba(34,197,94,0.60)"
-          : "rgba(239,68,68,0.60)",
+      color: c.close >= c.open ? "rgba(239,68,68,.45)" : "rgba(34,197,94,.45)",
     }));
 
     const ma5 = smaData(sorted, 5);
@@ -185,12 +182,13 @@ export function StockChart({ candles }: { candles: Candle[] }) {
     const macdChart = createChart(macdRef.current, baseOptions(140, true));
 
     const candleSeries = priceChart.addSeries(CandlestickSeries, {
-      upColor: "#22c55e",
-      downColor: "#ef4444",
-      borderUpColor: "#22c55e",
-      borderDownColor: "#ef4444",
-      wickUpColor: "#22c55e",
-      wickDownColor: "#ef4444",
+      upColor: "#ef4444",
+
+        downColor: "#22c55e",
+        borderUpColor: "#ef4444",
+        borderDownColor: "#22c55e",
+        wickUpColor: "#ef4444",
+        wickDownColor: "#22c55e",
     });
     candleSeries.setData(candleData);
 
