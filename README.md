@@ -1,6 +1,6 @@
 # 股票技術分析儀表板 Rebuild
 
-這是一個可取代 Manus 版本的 Vite + React + Supabase 專案，功能包含：
+這是一個 Vite + React + Supabase 專案，功能包含：
 
 - 美股 / 台股搜尋與 K 線圖
 - 台股 `.TW` → `.TWO` 自動 fallback（在 Supabase Edge Function 內處理）
