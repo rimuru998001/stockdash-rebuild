@@ -29,7 +29,7 @@ export type StockDataResponse = {
   yahooSymbol: string;
   meta: StockMeta;
   candles: Candle[];
-  fallbackTried?: string[];
+  fallbackTried?: unknown;
   message?: string;
 };
 
@@ -40,23 +40,45 @@ export type ScanResult = Stock & {
   ma60: number | null;
   rsi14: number | null;
   volumeRatio: number | null;
+
   isMA5AboveMA20: boolean;
   isBreak20High: boolean;
+
   score: number;
   strictPass: boolean;
-
-  // 分級制度
-  category?: string;              // 真黑馬 / 趨勢續攻 / 高位強勢 / 過熱警示
-  riskLevel?: string;             // 中低 / 中 / 高 / 極高
-  positionLabel?: string;         // 低位轉強 / 中段趨勢 / 高位續強 / 追高風險
-
-  // 位階與漲幅指標
-  oneYearReturn?: number | null;        // 一年漲幅
-  distanceFromLow52w?: number | null;   // 距離一年低點
-  distanceFromHigh52w?: number | null;  // 距離一年高點
-  return20d?: number | null;            // 近20日漲幅
-
   reasons: string[];
+
+  // 黑馬分類：保留新舊兩套命名，避免 Scanner.tsx 報錯
+  type?: string;
+  category?: string;
+  riskLevel?: string;
+  positionLevel?: string;
+  positionLabel?: string;
+
+  // 位階資訊：保留新舊兩套命名
+  oneYearGain?: number | null;
+  oneYearReturn?: number | null;
+
+  gainFromLow?: number | null;
+  distanceFromLow52w?: number | null;
+
+  pullbackFromHigh?: number | null;
+  distanceFromHigh52w?: number | null;
+
+  positionRatio?: number | null;
+
+  twentyDayGain?: number | null;
+  return20d?: number | null;
+
+  // 營收資料
+  revenueScore?: number | null;
+  revenueLevel?: string | null;
+  revenuePeriod?: string | null;
+  revenueYoY?: number | null;
+  revenueMoM?: number | null;
+  cumulativeRevenueYoY?: number | null;
+  revenueReasons?: string[];
+  revenueSource?: string | null;
 };
 
 export type PoolKey =
