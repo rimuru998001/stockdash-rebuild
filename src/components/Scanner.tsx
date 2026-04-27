@@ -1,6 +1,10 @@
 import { useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
-import { fetchHotStocksFromEdge, fetchStockData } from "../lib/api";
+import {
+  fetchHotStocksFromEdge,
+  fetchRevenueData,
+  fetchStockData,
+} from "../lib/api";
 import { calculateScore } from "../lib/indicators";
 import { poolLabels, stockPools } from "../lib/stockPools";
 import {
@@ -40,6 +44,11 @@ function formatPercent(value?: number | null) {
 function formatNumber(value?: number | null, digits = 2) {
   if (value == null || Number.isNaN(value)) return "-";
   return value.toFixed(digits);
+}
+
+function combineReasons(baseReasons: string[], revenueReasons?: string[]) {
+  if (!revenueReasons || revenueReasons.length === 0) return baseReasons;
+  return [...baseReasons, ...revenueReasons.map((reason) => `營收：${reason}`)];
 }
 
 export function Scanner({ user }: { user: User | null }) {
@@ -84,23 +93,6 @@ export function Scanner({ user }: { user: User | null }) {
   }, [selectedPool, customPool, hotPool]);
 
   const selectedList = getSelectedStockList();
-
-  async function loadCloudCustomPool() {
-    if (!supabase || !user) return null;
-
-    const { data, error } = await supabase
-      .from("user_stock_lists")
-      .select("stocks")
-      .eq("user_id", user.id)
-      .eq("list_name", "自訂清單")
-      .maybeSingle();
-
-    if (error) throw error;
-
-    return Array.isArray(data?.stocks)
-      ? dedupeStocksBySymbol(data.stocks)
-      : [];
-  }
 
   async function saveCustomPoolToCloud(pool: Stock[]) {
     if (!supabase || !user) return false;
@@ -251,7 +243,6 @@ export function Scanner({ user }: { user: User | null }) {
   }
 
   async function scanStock(stock: Stock): Promise<ScanResult | null> {
-    // 用 1y 才能正確判斷「一年漲幅 / 距離年低 / 高位風險」
     const data = await fetchStockData(stock.symbol, "1y");
 
     if (data.candles.length < 60) return null;
@@ -259,6 +250,34 @@ export function Scanner({ user }: { user: User | null }) {
     const calc = calculateScore(data.candles);
 
     if (!calc.latest) return null;
+
+    let revenueScore: number | null = null;
+    let revenueLevel: string | null = null;
+    let revenuePeriod: string | null = null;
+    let revenueYoY: number | null = null;
+    let revenueMoM: number | null = null;
+    let cumulativeRevenueYoY: number | null = null;
+    let revenueReasons: string[] = [];
+    let revenueSource: string | null = null;
+
+    try {
+      const revenueData = await fetchRevenueData(stock.symbol);
+      const revenue = revenueData.revenue;
+
+      if (revenue) {
+        revenueScore = revenue.revenueScore;
+        revenueLevel = revenue.revenueLevel;
+        revenuePeriod = revenue.period;
+        revenueYoY = revenue.yoyPercent;
+        revenueMoM = revenue.momPercent;
+        cumulativeRevenueYoY = revenue.cumulativeYoyPercent;
+        revenueReasons = revenue.revenueReasons;
+        revenueSource = revenue.source;
+      }
+    } catch (err) {
+      console.warn(`revenue fetch failed ${stock.symbol}`, err);
+      revenueReasons = ["營收資料取得失敗"];
+    }
 
     return {
       symbol: stock.symbol,
@@ -282,7 +301,16 @@ export function Scanner({ user }: { user: User | null }) {
       distanceFromHigh52w: calc.distanceFromHigh52w,
       return20d: calc.return20d,
 
-      reasons: calc.reasons,
+      revenueScore,
+      revenueLevel,
+      revenuePeriod,
+      revenueYoY,
+      revenueMoM,
+      cumulativeRevenueYoY,
+      revenueReasons,
+      revenueSource,
+
+      reasons: combineReasons(calc.reasons, revenueReasons),
     };
   }
 
@@ -315,19 +343,18 @@ export function Scanner({ user }: { user: User | null }) {
         if (result) {
           success++;
           scanned.push(result);
-          scanned.sort((a, b) => b.score - a.score);
 
           setResults([
-  ...scanned
-    .filter((r) => r.score >= 50)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, MAX_SCAN_RESULTS),
-]);
+            ...scanned
+              .filter((r) => r.score >= 50)
+              .sort((a, b) => b.score - a.score)
+              .slice(0, MAX_SCAN_RESULTS),
+          ]);
         } else {
           skipped++;
         }
       } catch (err) {
-        console.warn("scan failed", stock, err);
+        console.warn(`略過 ${stock.symbol} ${stock.name}：資料抓取失敗`, err);
         skipped++;
       }
 
@@ -335,7 +362,11 @@ export function Scanner({ user }: { user: User | null }) {
     }
 
     const strictCount = scanned.filter((r) => r.strictPass).length;
+
     const candidates = scanned
+      .filter((r) => r.score >= 50)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, MAX_SCAN_RESULTS);
 
     setResults(
       candidates.length
@@ -465,6 +496,10 @@ export function Scanner({ user }: { user: User | null }) {
                   <th>距年低</th>
                   <th>距年高</th>
                   <th>20日漲幅</th>
+                  <th>營收等級</th>
+                  <th>營收分</th>
+                  <th>單月YoY</th>
+                  <th>累計YoY</th>
                   <th>分數</th>
                   <th>原因</th>
                   <th>操作</th>
@@ -491,6 +526,12 @@ export function Scanner({ user }: { user: User | null }) {
                     <td>{formatPercent(r.distanceFromLow52w)}</td>
                     <td>{formatPercent(r.distanceFromHigh52w)}</td>
                     <td>{formatPercent(r.return20d)}</td>
+                    <td>{r.revenueLevel ?? "-"}</td>
+                    <td>
+                      {r.revenueScore != null ? `${r.revenueScore}/30` : "-"}
+                    </td>
+                    <td>{formatPercent(r.revenueYoY)}</td>
+                    <td>{formatPercent(r.cumulativeRevenueYoY)}</td>
                     <td>
                       <b>{r.score}</b>
                     </td>
