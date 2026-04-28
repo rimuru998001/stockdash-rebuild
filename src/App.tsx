@@ -151,7 +151,7 @@ export default function App() {
   <div className="priceBlock">
               <strong>{currencyFormat(latest?.close ?? meta?.regularMarketPrice, meta?.currency || "TWD")}</strong>
               {change !== undefined && changePct !== undefined && (
-                <span className={change >= 0 ? "green" : "red"}>{change >= 0 ? "+" : ""}{change.toFixed(2)}（{changePct.toFixed(2)}%）</span>
+                <span className={change >= 0 ? "red" : "green"}>{change >= 0 ? "+" : ""}{change.toFixed(2)}（{changePct.toFixed(2)}%）</span>
               )}
             </div>
           </section>
@@ -160,7 +160,7 @@ export default function App() {
             <StatCard title="RSI (14)" value={indicators?.rsi14?.toFixed(1) ?? "-"} subtitle="中性" />
             <StatCard title="MA20（月線）" value={indicators?.ma20?.toFixed(0) ?? "-"} subtitle={latest && indicators?.ma20 && latest.close > indicators.ma20 ? "價格 > MA20 ✓" : "價格 < MA20"} positive={latest && indicators?.ma20 ? latest.close > indicators.ma20 : undefined} />
             <StatCard title="MA60（季線）" value={indicators?.ma60?.toFixed(0) ?? "-"} subtitle={latest && indicators?.ma60 && latest.close > indicators.ma60 ? "價格 > MA60 ✓" : "價格 < MA60"} positive={latest && indicators?.ma60 ? latest.close > indicators.ma60 : undefined} />
-            <StatCard title="漲跌幅" value={changePct !== undefined ? `${changePct.toFixed(2)}%` : "-"} positive={(changePct ?? 0) >= 0} />
+            <StatCard title="漲跌幅" value={changePct !== undefined ? `${changePct.toFixed(2)}%` : "-"} positive={(changePct ?? 0) < 0} />
             <StatCard title="成交量" value={latest?.volume ? `${(latest.volume / 1_000_000).toFixed(1)}M` : "-"} />
             <StatCard title="幣種" value={meta?.currency || "-"} />
           </section>
