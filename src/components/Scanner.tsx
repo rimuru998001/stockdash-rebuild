@@ -22,6 +22,10 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const MAX_SCAN_RESULTS = 100;
 
+// 總分門檻：想讓名單更少、更精準就調高，例如 70。
+// 想多看一點候選就調低，例如 60。
+const MIN_FINAL_SCORE = 65;
+
 const poolOrder: PoolKey[] = [
   "all",
   "largeCap",
@@ -46,9 +50,146 @@ function formatNumber(value?: number | null, digits = 2) {
   return value.toFixed(digits);
 }
 
+function clamp(value: number, min = 0, max = 100) {
+  return Math.max(min, Math.min(max, value));
+}
+
 function combineReasons(baseReasons: string[], revenueReasons?: string[]) {
   if (!revenueReasons || revenueReasons.length === 0) return baseReasons;
   return [...baseReasons, ...revenueReasons.map((reason) => `營收：${reason}`)];
+}
+
+function calcFinalScore(args: {
+  technicalBaseScore: number;
+  revenueScore: number | null;
+  riskLevel?: string;
+  category?: string;
+  riskPenalty?: number | null;
+}) {
+  const revenueNormalized =
+    args.revenueScore != null ? (args.revenueScore / 30) * 100 : 40;
+
+  let finalScore = Math.round(
+    args.technicalBaseScore * 0.7 + revenueNormalized * 0.3
+  );
+
+  // 營收太弱，但技術面很漂亮時，避免太容易排前面。
+  if (args.revenueScore != null && args.revenueScore <= 5) {
+    finalScore -= 8;
+  }
+
+  // 高風險分類再扣分。
+  if (args.riskLevel === "極高" || args.category === "高風險異動") {
+    finalScore -= 15;
+  }
+
+  if ((args.riskPenalty ?? 0) >= 30) {
+    finalScore -= 10;
+  }
+
+  return clamp(finalScore);
+}
+
+function calcFinalCategory(args: {
+  baseCategory?: string;
+  riskLevel?: string;
+  revenueScore: number | null;
+  finalScore: number;
+  revenueYoY: number | null;
+  cumulativeRevenueYoY: number | null;
+}) {
+  const baseCategory = args.baseCategory || "觀察名單";
+  const revenueScore = args.revenueScore ?? 0;
+  const revenueWeak =
+    revenueScore <= 5 ||
+    ((args.revenueYoY ?? 0) < 0 && (args.cumulativeRevenueYoY ?? 0) < 0);
+  const revenueStrong = revenueScore >= 18;
+
+  if (baseCategory === "排除") return "排除";
+
+  if (args.riskLevel === "極高" || baseCategory === "高風險異動") {
+    return "高風險異動";
+  }
+
+  if (baseCategory === "資金異動" && revenueStrong && args.finalScore >= 75) {
+    return "真黑馬候選";
+  }
+
+  if (baseCategory === "真黑馬" && revenueStrong && args.finalScore >= 75) {
+    return "真黑馬";
+  }
+
+  if (baseCategory === "高位強勢" && revenueStrong) {
+    return "成長強勢";
+  }
+
+  if (baseCategory === "資金異動" && revenueWeak) {
+    return "資金異動";
+  }
+
+  if (baseCategory === "真黑馬" && revenueWeak) {
+    return "短線動能";
+  }
+
+  return baseCategory;
+}
+
+function buildWarningFlags(args: {
+  rsi14: number | null;
+  riskLevel?: string;
+  positionLabel?: string;
+  return20d?: number | null;
+  distanceFromLow52w?: number | null;
+  revenueScore: number | null;
+  revenueYoY: number | null;
+  cumulativeRevenueYoY: number | null;
+  category?: string;
+}) {
+  const flags: string[] = [];
+
+  if ((args.rsi14 ?? 0) > 75) flags.push("RSI過熱");
+  if ((args.return20d ?? 0) > 45) flags.push("20日急漲");
+  else if ((args.return20d ?? 0) > 30) flags.push("短線偏熱");
+
+  if ((args.distanceFromLow52w ?? 0) > 350) flags.push("遠離年低");
+  else if ((args.distanceFromLow52w ?? 0) > 200) flags.push("位階偏高");
+
+  if (args.riskLevel === "極高") flags.push("極高風險");
+  if (args.positionLabel === "追高風險") flags.push("追高風險");
+  if (args.category === "高風險異動") flags.push("高風險異動");
+
+  if (args.revenueScore != null && args.revenueScore <= 5) {
+    flags.push("營收偏弱");
+  }
+
+  if ((args.revenueYoY ?? 0) < 0 && (args.cumulativeRevenueYoY ?? 0) < 0) {
+    flags.push("營收衰退");
+  }
+
+  return Array.from(new Set(flags));
+}
+
+function isGoodCandidate(result: ScanResult) {
+  const finalScore = result.finalScore ?? result.score;
+  const category = result.finalCategory ?? result.category ?? "";
+
+  if (category === "排除") return false;
+  if (category === "高風險異動") return false;
+  if (result.riskLevel === "極高") return false;
+
+  return finalScore >= MIN_FINAL_SCORE;
+}
+
+function sortByFinalScore(a: ScanResult, b: ScanResult) {
+  const scoreA = a.finalScore ?? a.score;
+  const scoreB = b.finalScore ?? b.score;
+
+  if (scoreB !== scoreA) return scoreB - scoreA;
+
+  const revenueA = a.revenueScore ?? 0;
+  const revenueB = b.revenueScore ?? 0;
+
+  return revenueB - revenueA;
 }
 
 export function Scanner({ user }: { user: User | null }) {
@@ -279,6 +420,39 @@ export function Scanner({ user }: { user: User | null }) {
       revenueReasons = ["營收資料取得失敗"];
     }
 
+    const technicalScore = calc.technicalScore ?? calc.score;
+    const moneyFlowScore = calc.moneyFlowScore ?? null;
+    const riskPenalty = calc.riskPenalty ?? null;
+
+    const finalScore = calcFinalScore({
+      technicalBaseScore: calc.score,
+      revenueScore,
+      riskLevel: calc.riskLevel,
+      category: calc.category,
+      riskPenalty,
+    });
+
+    const finalCategory = calcFinalCategory({
+      baseCategory: calc.category,
+      riskLevel: calc.riskLevel,
+      revenueScore,
+      finalScore,
+      revenueYoY,
+      cumulativeRevenueYoY,
+    });
+
+    const warningFlags = buildWarningFlags({
+      rsi14: calc.rsi14,
+      riskLevel: calc.riskLevel,
+      positionLabel: calc.positionLabel,
+      return20d: calc.return20d,
+      distanceFromLow52w: calc.distanceFromLow52w,
+      revenueScore,
+      revenueYoY,
+      cumulativeRevenueYoY,
+      category: finalCategory,
+    });
+
     return {
       symbol: stock.symbol,
       name: stock.name || data.meta.name || stock.symbol,
@@ -291,9 +465,14 @@ export function Scanner({ user }: { user: User | null }) {
       isMA5AboveMA20: Boolean(calc.ma5 && calc.ma20 && calc.ma5 > calc.ma20),
       isBreak20High: Boolean(calc.high20 && calc.latest.close > calc.high20),
       score: calc.score,
+      technicalScore,
+      moneyFlowScore,
+      riskPenalty,
+      finalScore,
       strictPass: calc.strictPass,
 
       category: calc.category,
+      finalCategory,
       riskLevel: calc.riskLevel,
       positionLabel: calc.positionLabel,
       oneYearReturn: calc.oneYearReturn,
@@ -310,6 +489,7 @@ export function Scanner({ user }: { user: User | null }) {
       revenueReasons,
       revenueSource,
 
+      warningFlags,
       reasons: combineReasons(calc.reasons, revenueReasons),
     };
   }
@@ -346,8 +526,8 @@ export function Scanner({ user }: { user: User | null }) {
 
           setResults([
             ...scanned
-              .filter((r) => r.score >= 50)
-              .sort((a, b) => b.score - a.score)
+              .filter(isGoodCandidate)
+              .sort(sortByFinalScore)
               .slice(0, MAX_SCAN_RESULTS),
           ]);
         } else {
@@ -364,14 +544,14 @@ export function Scanner({ user }: { user: User | null }) {
     const strictCount = scanned.filter((r) => r.strictPass).length;
 
     const candidates = scanned
-      .filter((r) => r.score >= 50)
-      .sort((a, b) => b.score - a.score)
+      .filter(isGoodCandidate)
+      .sort(sortByFinalScore)
       .slice(0, MAX_SCAN_RESULTS);
 
     setResults(
       candidates.length
         ? candidates
-        : scanned.sort((a, b) => b.score - a.score).slice(0, 10)
+        : scanned.sort(sortByFinalScore).slice(0, 10)
     );
 
     setStats(
@@ -477,7 +657,10 @@ export function Scanner({ user }: { user: User | null }) {
 
       {results.length > 0 && (
         <div className="resultsWrap">
-          <h3>掃描結果（最多保留前 {MAX_SCAN_RESULTS} 筆，可捲動查看）</h3>
+          <h3>
+            掃描結果（總分門檻 {MIN_FINAL_SCORE}，最多保留前{" "}
+            {MAX_SCAN_RESULTS} 筆，可捲動查看）
+          </h3>
 
           <div className="tableWrap scannerResultScroll">
             <table>
@@ -485,7 +668,8 @@ export function Scanner({ user }: { user: User | null }) {
                 <tr>
                   <th>代號</th>
                   <th>名稱</th>
-                  <th>類型</th>
+                  <th>最終類型</th>
+                  <th>原始類型</th>
                   <th>風險</th>
                   <th>位階</th>
                   <th>收盤</th>
@@ -494,13 +678,15 @@ export function Scanner({ user }: { user: User | null }) {
                   <th>量比</th>
                   <th>一年漲幅</th>
                   <th>距年低</th>
-                  <th>距年高</th>
                   <th>20日漲幅</th>
+                  <th>技術分</th>
+                  <th>資金分</th>
                   <th>營收等級</th>
                   <th>營收分</th>
                   <th>單月YoY</th>
                   <th>累計YoY</th>
-                  <th>分數</th>
+                  <th>總分</th>
+                  <th>警示</th>
                   <th>原因</th>
                   <th>操作</th>
                 </tr>
@@ -512,8 +698,9 @@ export function Scanner({ user }: { user: User | null }) {
                     <td>{r.symbol}</td>
                     <td>{r.name}</td>
                     <td>
-                      <b>{r.category ?? "-"}</b>
+                      <b>{r.finalCategory ?? r.category ?? "-"}</b>
                     </td>
+                    <td>{r.category ?? "-"}</td>
                     <td>{r.riskLevel ?? "-"}</td>
                     <td>{r.positionLabel ?? "-"}</td>
                     <td>{formatNumber(r.close)}</td>
@@ -524,8 +711,9 @@ export function Scanner({ user }: { user: User | null }) {
                     </td>
                     <td>{formatPercent(r.oneYearReturn)}</td>
                     <td>{formatPercent(r.distanceFromLow52w)}</td>
-                    <td>{formatPercent(r.distanceFromHigh52w)}</td>
                     <td>{formatPercent(r.return20d)}</td>
+                    <td>{r.technicalScore ?? r.score}</td>
+                    <td>{r.moneyFlowScore ?? "-"}</td>
                     <td>{r.revenueLevel ?? "-"}</td>
                     <td>
                       {r.revenueScore != null ? `${r.revenueScore}/30` : "-"}
@@ -533,7 +721,12 @@ export function Scanner({ user }: { user: User | null }) {
                     <td>{formatPercent(r.revenueYoY)}</td>
                     <td>{formatPercent(r.cumulativeRevenueYoY)}</td>
                     <td>
-                      <b>{r.score}</b>
+                      <b>{r.finalScore ?? r.score}</b>
+                    </td>
+                    <td className="reasonCell">
+                      {r.warningFlags && r.warningFlags.length > 0
+                        ? r.warningFlags.join("、")
+                        : "-"}
                     </td>
                     <td className="reasonCell">{r.reasons.join("、")}</td>
                     <td>
