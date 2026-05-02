@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import {
+  fetchHolderData,
   fetchHotStocksFromEdge,
   fetchRevenueData,
   fetchStockData,
@@ -21,9 +22,6 @@ import type { PoolKey, ScanResult, Stock } from "../lib/types";
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const MAX_SCAN_RESULTS = 100;
-
-// 總分門檻：想讓名單更少、更精準就調高，例如 70。
-// 想多看一點候選就調低，例如 60。
 const MIN_FINAL_SCORE = 65;
 
 const poolOrder: PoolKey[] = [
@@ -54,14 +52,28 @@ function clamp(value: number, min = 0, max = 100) {
   return Math.max(min, Math.min(max, value));
 }
 
-function combineReasons(baseReasons: string[], revenueReasons?: string[]) {
-  if (!revenueReasons || revenueReasons.length === 0) return baseReasons;
-  return [...baseReasons, ...revenueReasons.map((reason) => `營收：${reason}`)];
+function combineReasons(
+  baseReasons: string[],
+  revenueReasons?: string[],
+  holderReasons?: string[]
+) {
+  const result = [...baseReasons];
+
+  if (revenueReasons && revenueReasons.length > 0) {
+    result.push(...revenueReasons.map((reason) => `營收：${reason}`));
+  }
+
+  if (holderReasons && holderReasons.length > 0) {
+    result.push(...holderReasons.map((reason) => `籌碼：${reason}`));
+  }
+
+  return result;
 }
 
 function calcFinalScore(args: {
   technicalBaseScore: number;
   revenueScore: number | null;
+  holderScore: number | null;
   riskLevel?: string;
   category?: string;
   riskPenalty?: number | null;
@@ -69,16 +81,23 @@ function calcFinalScore(args: {
   const revenueNormalized =
     args.revenueScore != null ? (args.revenueScore / 30) * 100 : 40;
 
+  const holderNormalized =
+    args.holderScore != null ? (args.holderScore / 30) * 100 : 45;
+
   let finalScore = Math.round(
-    args.technicalBaseScore * 0.7 + revenueNormalized * 0.3
+    args.technicalBaseScore * 0.55 +
+      revenueNormalized * 0.25 +
+      holderNormalized * 0.2
   );
 
-  // 營收太弱，但技術面很漂亮時，避免太容易排前面。
   if (args.revenueScore != null && args.revenueScore <= 5) {
     finalScore -= 8;
   }
 
-  // 高風險分類再扣分。
+  if (args.holderScore != null && args.holderScore <= 5) {
+    finalScore -= 5;
+  }
+
   if (args.riskLevel === "極高" || args.category === "高風險異動") {
     finalScore -= 15;
   }
@@ -94,16 +113,21 @@ function calcFinalCategory(args: {
   baseCategory?: string;
   riskLevel?: string;
   revenueScore: number | null;
+  holderScore: number | null;
   finalScore: number;
   revenueYoY: number | null;
   cumulativeRevenueYoY: number | null;
 }) {
   const baseCategory = args.baseCategory || "觀察名單";
   const revenueScore = args.revenueScore ?? 0;
+  const holderScore = args.holderScore ?? 0;
+
   const revenueWeak =
     revenueScore <= 5 ||
     ((args.revenueYoY ?? 0) < 0 && (args.cumulativeRevenueYoY ?? 0) < 0);
+
   const revenueStrong = revenueScore >= 18;
+  const holderStrong = holderScore >= 18;
 
   if (baseCategory === "排除") return "排除";
 
@@ -111,23 +135,44 @@ function calcFinalCategory(args: {
     return "高風險異動";
   }
 
-  if (baseCategory === "資金異動" && revenueStrong && args.finalScore >= 75) {
+  if (
+    baseCategory === "資金異動" &&
+    (revenueStrong || holderStrong) &&
+    args.finalScore >= 72
+  ) {
     return "真黑馬候選";
   }
 
-  if (baseCategory === "真黑馬" && revenueStrong && args.finalScore >= 75) {
+  if (
+    baseCategory === "真黑馬" &&
+    revenueStrong &&
+    holderStrong &&
+    args.finalScore >= 75
+  ) {
     return "真黑馬";
   }
 
-  if (baseCategory === "高位強勢" && revenueStrong) {
+  if (
+    baseCategory === "真黑馬" &&
+    (revenueStrong || holderStrong) &&
+    args.finalScore >= 72
+  ) {
+    return "真黑馬候選";
+  }
+
+  if (baseCategory === "高位強勢" && revenueStrong && holderStrong) {
     return "成長強勢";
   }
 
-  if (baseCategory === "資金異動" && revenueWeak) {
+  if (baseCategory === "高位強勢" && (revenueStrong || holderStrong)) {
+    return "高位成長";
+  }
+
+  if (baseCategory === "資金異動" && revenueWeak && !holderStrong) {
     return "資金異動";
   }
 
-  if (baseCategory === "真黑馬" && revenueWeak) {
+  if (baseCategory === "真黑馬" && revenueWeak && !holderStrong) {
     return "短線動能";
   }
 
@@ -143,6 +188,7 @@ function buildWarningFlags(args: {
   revenueScore: number | null;
   revenueYoY: number | null;
   cumulativeRevenueYoY: number | null;
+  holderScore: number | null;
   category?: string;
 }) {
   const flags: string[] = [];
@@ -166,6 +212,14 @@ function buildWarningFlags(args: {
     flags.push("營收衰退");
   }
 
+  if (args.holderScore != null && args.holderScore <= 5) {
+    flags.push("籌碼分散");
+  }
+
+  if (args.holderScore != null && args.holderScore >= 24) {
+    flags.push("籌碼集中");
+  }
+
   return Array.from(new Set(flags));
 }
 
@@ -185,6 +239,11 @@ function sortByFinalScore(a: ScanResult, b: ScanResult) {
   const scoreB = b.finalScore ?? b.score;
 
   if (scoreB !== scoreA) return scoreB - scoreA;
+
+  const holderA = a.holderScore ?? 0;
+  const holderB = b.holderScore ?? 0;
+
+  if (holderB !== holderA) return holderB - holderA;
 
   const revenueA = a.revenueScore ?? 0;
   const revenueB = b.revenueScore ?? 0;
@@ -420,6 +479,34 @@ export function Scanner({ user }: { user: User | null }) {
       revenueReasons = ["營收資料取得失敗"];
     }
 
+    let holderScore: number | null = null;
+    let holderLevel: string | null = null;
+    let holderDate: string | null = null;
+    let largeHolderRatio: number | null = null;
+    let whaleHolderRatio: number | null = null;
+    let retailHolderRatio: number | null = null;
+    let holderReasons: string[] = [];
+    let holderSource: string | null = null;
+
+    try {
+      const holderData = await fetchHolderData(stock.symbol);
+      const holder = holderData.holder;
+
+      if (holder) {
+        holderScore = holder.holderScore;
+        holderLevel = holder.holderLevel;
+        holderDate = holder.date;
+        largeHolderRatio = holder.largeHolderRatio;
+        whaleHolderRatio = holder.whaleHolderRatio;
+        retailHolderRatio = holder.retailHolderRatio;
+        holderReasons = holder.reasons;
+        holderSource = holder.source;
+      }
+    } catch (err) {
+      console.warn(`holder fetch failed ${stock.symbol}`, err);
+      holderReasons = ["籌碼資料取得失敗"];
+    }
+
     const technicalScore = calc.technicalScore ?? calc.score;
     const moneyFlowScore = calc.moneyFlowScore ?? null;
     const riskPenalty = calc.riskPenalty ?? null;
@@ -427,6 +514,7 @@ export function Scanner({ user }: { user: User | null }) {
     const finalScore = calcFinalScore({
       technicalBaseScore: calc.score,
       revenueScore,
+      holderScore,
       riskLevel: calc.riskLevel,
       category: calc.category,
       riskPenalty,
@@ -436,6 +524,7 @@ export function Scanner({ user }: { user: User | null }) {
       baseCategory: calc.category,
       riskLevel: calc.riskLevel,
       revenueScore,
+      holderScore,
       finalScore,
       revenueYoY,
       cumulativeRevenueYoY,
@@ -450,6 +539,7 @@ export function Scanner({ user }: { user: User | null }) {
       revenueScore,
       revenueYoY,
       cumulativeRevenueYoY,
+      holderScore,
       category: finalCategory,
     });
 
@@ -489,8 +579,17 @@ export function Scanner({ user }: { user: User | null }) {
       revenueReasons,
       revenueSource,
 
+      holderScore,
+      holderLevel,
+      holderDate,
+      largeHolderRatio,
+      whaleHolderRatio,
+      retailHolderRatio,
+      holderReasons,
+      holderSource,
+
       warningFlags,
-      reasons: combineReasons(calc.reasons, revenueReasons),
+      reasons: combineReasons(calc.reasons, revenueReasons, holderReasons),
     };
   }
 
@@ -586,14 +685,14 @@ export function Scanner({ user }: { user: User | null }) {
             key === "custom"
               ? customPool.length
               : key === "hot"
-              ? hotPool.length
-              : key === "all"
-              ? dedupeStocksBySymbol([
-                  ...Object.values(stockPools).flat(),
-                  ...customPool,
-                  ...hotPool,
-                ]).length
-              : (stockPools[key] || []).length;
+                ? hotPool.length
+                : key === "all"
+                  ? dedupeStocksBySymbol([
+                      ...Object.values(stockPools).flat(),
+                      ...customPool,
+                      ...hotPool,
+                    ]).length
+                  : (stockPools[key] || []).length;
 
           return (
             <option key={key} value={key}>
@@ -683,6 +782,11 @@ export function Scanner({ user }: { user: User | null }) {
                   <th>資金分</th>
                   <th>營收等級</th>
                   <th>營收分</th>
+                  <th>籌碼等級</th>
+                  <th>籌碼分</th>
+                  <th>大戶%</th>
+                  <th>千張%</th>
+                  <th>散戶%</th>
                   <th>單月YoY</th>
                   <th>累計YoY</th>
                   <th>總分</th>
@@ -718,6 +822,13 @@ export function Scanner({ user }: { user: User | null }) {
                     <td>
                       {r.revenueScore != null ? `${r.revenueScore}/30` : "-"}
                     </td>
+                    <td>{r.holderLevel ?? "-"}</td>
+                    <td>
+                      {r.holderScore != null ? `${r.holderScore}/30` : "-"}
+                    </td>
+                    <td>{formatPercent(r.largeHolderRatio)}</td>
+                    <td>{formatPercent(r.whaleHolderRatio)}</td>
+                    <td>{formatPercent(r.retailHolderRatio)}</td>
                     <td>{formatPercent(r.revenueYoY)}</td>
                     <td>{formatPercent(r.cumulativeRevenueYoY)}</td>
                     <td>

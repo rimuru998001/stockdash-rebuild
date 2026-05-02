@@ -44,10 +44,7 @@ function normalizeStockData(raw: any, requestedSymbol: string): StockDataRespons
     throw new Error(raw?.message || raw?.error || "股票資料抓取失敗");
   }
 
-  const symbol =
-    raw.requestedSymbol ||
-    raw.inputSymbol ||
-    requestedSymbol;
+  const symbol = raw.requestedSymbol || raw.inputSymbol || requestedSymbol;
 
   const yahooSymbol =
     raw.yahooSymbol ||
@@ -86,7 +83,9 @@ function normalizeStockData(raw: any, requestedSymbol: string): StockDataRespons
     raw.meta?.regularMarketChangePercent;
 
   const candles = Array.isArray(raw.candles)
-    ? raw.candles.map(normalizeCandle).filter((c: Candle) => c.time && Number.isFinite(c.close))
+    ? raw.candles
+        .map(normalizeCandle)
+        .filter((c: Candle) => c.time && Number.isFinite(c.close))
     : [];
 
   return {
@@ -109,7 +108,10 @@ function normalizeStockData(raw: any, requestedSymbol: string): StockDataRespons
   };
 }
 
-export async function fetchStockData(symbol: string, range = "6mo"): Promise<StockDataResponse> {
+export async function fetchStockData(
+  symbol: string,
+  range = "6mo"
+): Promise<StockDataResponse> {
   const safeSymbol = normalizeSymbol(symbol);
 
   if (!safeSymbol) {
@@ -151,17 +153,23 @@ export type HotStocksResponse = {
 };
 
 function normalizeStock(raw: any): Stock | null {
-  const symbol = normalizeSymbol(raw?.symbol || raw?.code || raw?.代號 || raw?.股票代號 || "");
+  const symbol = normalizeSymbol(
+    raw?.symbol ||
+      raw?.code ||
+      raw?.代號 ||
+      raw?.股票代號 ||
+      ""
+  );
 
   if (!symbol) return null;
 
   const name = String(
     raw?.name ||
-    raw?.stockName ||
-    raw?.名稱 ||
-    raw?.股票名稱 ||
-    raw?.公司名稱 ||
-    symbol,
+      raw?.stockName ||
+      raw?.名稱 ||
+      raw?.股票名稱 ||
+      raw?.公司名稱 ||
+      symbol
   ).trim();
 
   return {
@@ -192,14 +200,13 @@ export async function fetchHotStocksFromEdge(): Promise<HotStocksResponse> {
     throw new Error(json?.message || json?.error || `熱門股服務錯誤 HTTP ${response.status}`);
   }
 
-  const rawStocks =
-    Array.isArray(json?.stocks)
-      ? json.stocks
-      : Array.isArray(json?.data)
-        ? json.data
-        : Array.isArray(json)
-          ? json
-          : [];
+  const rawStocks = Array.isArray(json?.stocks)
+    ? json.stocks
+    : Array.isArray(json?.data)
+      ? json.data
+      : Array.isArray(json)
+        ? json
+        : [];
 
   const stocks = rawStocks
     .map(normalizeStock)
@@ -260,7 +267,9 @@ function normalizeRevenue(raw: any): RevenueData | null {
     cumulativeYoyPercent: raw.cumulativeYoyPercent ?? null,
     revenueScore: Number(raw.revenueScore ?? 0),
     revenueLevel: String(raw.revenueLevel || "營收未知"),
-    revenueReasons: Array.isArray(raw.revenueReasons) ? raw.revenueReasons.map(String) : [],
+    revenueReasons: Array.isArray(raw.revenueReasons)
+      ? raw.revenueReasons.map(String)
+      : [],
   };
 }
 
@@ -295,7 +304,9 @@ export async function fetchRevenueData(symbol: string): Promise<RevenueDataRespo
 
   const revenue = normalizeRevenue(json?.revenue);
   const history = Array.isArray(json?.history)
-    ? json.history.map(normalizeRevenue).filter((item: RevenueData | null): item is RevenueData => Boolean(item))
+    ? json.history
+        .map(normalizeRevenue)
+        .filter((item: RevenueData | null): item is RevenueData => Boolean(item))
     : [];
 
   return {
@@ -304,6 +315,108 @@ export async function fetchRevenueData(symbol: string): Promise<RevenueDataRespo
     inputSymbol: json?.inputSymbol || safeSymbol,
     revenue,
     history,
+    message: json?.message,
+    debug: json?.debug,
+  };
+}
+
+export type HolderData = {
+  symbol: string;
+  name: string;
+  date: string;
+  source: string;
+
+  holderScore: number;
+  holderLevel: string;
+
+  largeHolderRatio: number | null;
+  whaleHolderRatio: number | null;
+  middleHolderRatio: number | null;
+  retailHolderRatio: number | null;
+
+  largeHolderCount: number | null;
+  retailHolderCount: number | null;
+
+  largeHolderRatioChange: number | null;
+  whaleHolderRatioChange: number | null;
+  retailHolderRatioChange: number | null;
+
+  reasons: string[];
+  distribution?: unknown[];
+};
+
+export type HolderDataResponse = {
+  success: boolean;
+  functionVersion?: string;
+  inputSymbol: string;
+  holder: HolderData | null;
+  message?: string;
+  debug?: unknown;
+};
+
+function normalizeHolder(raw: any): HolderData | null {
+  if (!raw) return null;
+
+  return {
+    symbol: normalizeSymbol(raw.symbol || ""),
+    name: String(raw.name || raw.symbol || "").trim(),
+    date: String(raw.date || ""),
+    source: String(raw.source || ""),
+
+    holderScore: Number(raw.holderScore ?? 0),
+    holderLevel: String(raw.holderLevel || "籌碼未知"),
+
+    largeHolderRatio: raw.largeHolderRatio ?? null,
+    whaleHolderRatio: raw.whaleHolderRatio ?? null,
+    middleHolderRatio: raw.middleHolderRatio ?? null,
+    retailHolderRatio: raw.retailHolderRatio ?? null,
+
+    largeHolderCount: raw.largeHolderCount ?? null,
+    retailHolderCount: raw.retailHolderCount ?? null,
+
+    largeHolderRatioChange: raw.largeHolderRatioChange ?? null,
+    whaleHolderRatioChange: raw.whaleHolderRatioChange ?? null,
+    retailHolderRatioChange: raw.retailHolderRatioChange ?? null,
+
+    reasons: Array.isArray(raw.reasons) ? raw.reasons.map(String) : [],
+    distribution: Array.isArray(raw.distribution) ? raw.distribution : [],
+  };
+}
+
+export async function fetchHolderData(symbol: string): Promise<HolderDataResponse> {
+  const safeSymbol = normalizeSymbol(symbol);
+
+  if (!safeSymbol) {
+    throw new Error("請輸入股票代號");
+  }
+
+  const url = new URL(getFunctionUrl("get-holder-data"));
+  url.searchParams.set("symbol", safeSymbol);
+
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    headers: getHeaders(),
+  });
+
+  const text = await response.text();
+
+  let json: any;
+
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`籌碼資料回傳格式錯誤：${text.slice(0, 120)}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(json?.message || json?.error || `籌碼資料服務錯誤 HTTP ${response.status}`);
+  }
+
+  return {
+    success: Boolean(json?.success),
+    functionVersion: json?.functionVersion,
+    inputSymbol: json?.inputSymbol || safeSymbol,
+    holder: normalizeHolder(json?.holder),
     message: json?.message,
     debug: json?.debug,
   };
