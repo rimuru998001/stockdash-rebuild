@@ -421,3 +421,44 @@ export async function fetchHolderData(symbol: string): Promise<HolderDataRespons
     debug: json?.debug,
   };
 }
+export type StockAlertPayload = {
+  symbol?: string;
+  name?: string;
+  finalCategory?: string;
+  finalScore?: number;
+  technicalScore?: number;
+  revenueScore?: number;
+  holderScore?: number;
+  revenueYoY?: number;
+  cumulativeRevenueYoY?: number;
+  largeHolderRatio?: number;
+  whaleHolderRatio?: number;
+  retailHolderRatio?: number;
+  reasons?: string[];
+};
+
+export async function sendStockAlert(payload: StockAlertPayload) {
+  const url = getFunctionUrl("send-stock-alert");
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  const text = await response.text();
+
+  let json: any;
+
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`推播回傳格式錯誤：${text.slice(0, 120)}`);
+  }
+
+  if (!response.ok || json?.success === false) {
+    throw new Error(json?.message || json?.error || `推播失敗 HTTP ${response.status}`);
+  }
+
+  return json;
+}

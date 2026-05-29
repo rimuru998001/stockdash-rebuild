@@ -5,6 +5,7 @@ import {
   fetchHotStocksFromEdge,
   fetchRevenueData,
   fetchStockData,
+  sendStockAlert,
 } from "../lib/api";
 import { calculateScore } from "../lib/indicators";
 import { poolLabels, stockPools } from "../lib/stockPools";
@@ -442,6 +443,31 @@ export function Scanner({ user }: { user: User | null }) {
     }
   }
 
+  async function sendAlertForStock(result: ScanResult) {
+    try {
+      await sendStockAlert({
+        symbol: result.symbol,
+        name: result.name,
+        finalCategory: result.finalCategory ?? result.category ?? "-",
+        finalScore: result.finalScore ?? result.score,
+        technicalScore: result.technicalScore ?? result.score,
+        revenueScore: result.revenueScore ?? undefined,
+        holderScore: result.holderScore ?? undefined,
+        revenueYoY: result.revenueYoY ?? undefined,
+        cumulativeRevenueYoY: result.cumulativeRevenueYoY ?? undefined,
+        largeHolderRatio: result.largeHolderRatio ?? undefined,
+        whaleHolderRatio: result.whaleHolderRatio ?? undefined,
+        retailHolderRatio: result.retailHolderRatio ?? undefined,
+        reasons: result.reasons.slice(0, 8),
+      });
+
+      setStats(`已推播 ${result.symbol} ${result.name} 到 Telegram`);
+    } catch (err) {
+      console.error("send alert failed", err);
+      setStats(`推播失敗：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   async function scanStock(stock: Stock): Promise<ScanResult | null> {
     const data = await fetchStockData(stock.symbol, "1y");
 
@@ -841,12 +867,21 @@ export function Scanner({ user }: { user: User | null }) {
                     </td>
                     <td className="reasonCell">{r.reasons.join("、")}</td>
                     <td>
-                      <button
-                        className="small"
-                        onClick={() => addStockToCustomPool(r)}
-                      >
-                        加入自訂清單
-                      </button>
+                      <div className="buttonRow">
+                        <button
+                          className="small"
+                          onClick={() => addStockToCustomPool(r)}
+                        >
+                          加入自訂
+                        </button>
+
+                        <button
+                          className="small secondary"
+                          onClick={() => sendAlertForStock(r)}
+                        >
+                          推播
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
