@@ -1,3 +1,4 @@
+
 export {};
 
 declare const Deno: {
@@ -80,6 +81,7 @@ const BATCH_SIZE = 10;
 const MAX_STRONG_ALERTS = 5;
 const MAX_WATCH_ALERTS = 6;
 const MAX_RISK_ALERTS = 2;
+const MAX_BATCH_TOP_ALERTS = 3;
 
 function getFunctionUrl(functionName: string) {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -734,6 +736,8 @@ function splitAlertGroups(
 ) {
   const sorted = results.slice().sort((a, b) => b.finalScore - a.finalScore);
 
+  const batchTop = sorted.slice(0, MAX_BATCH_TOP_ALERTS);
+
   const strong = sorted
     .filter(
       (r) =>
@@ -775,6 +779,7 @@ function splitAlertGroups(
     .slice(0, MAX_RISK_ALERTS);
 
   return {
+    batchTop,
     strong,
     watch,
     risk,
@@ -920,6 +925,11 @@ function buildTelegramReport(args: {
     timeZone: "Asia/Taipei",
   });
 
+  const batchTopText =
+    args.groups.batchTop.length > 0
+      ? args.groups.batchTop.map(formatStockLine).join("\n\n")
+      : "無";
+
   const strongText =
     args.groups.strong.length > 0
       ? args.groups.strong.map(formatStockLine).join("\n\n")
@@ -940,6 +950,9 @@ function buildTelegramReport(args: {
     `時間：${now}`,
     `批次：batch ${args.batch}｜範圍：第 ${args.startIndex}～${args.endIndex} 支 / 共 ${args.totalPoolCount} 支`,
     `掃描：${args.scannedCount} 支｜成功：${args.successCount}｜略過：${args.skippedCount}`,
+    ``,
+    `【本批最高分 Top ${MAX_BATCH_TOP_ALERTS}】`,
+    batchTopText,
     ``,
     `【強力候選】最多 ${MAX_STRONG_ALERTS} 支`,
     strongText,
