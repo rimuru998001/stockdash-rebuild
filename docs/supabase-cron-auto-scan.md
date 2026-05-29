@@ -50,7 +50,7 @@ Supabase Cron 的排程時間使用 **UTC**，不是台灣時間。
 | 20:50 | 12:50 | `batch=4` |
 | 20:55 | 12:55 | `batch=5` |
 
-因此，如果你希望每天台灣時間晚上 20:30 開始分批掃描，在 `cron.schedule` 裡要填 UTC 的 `12:30`、`12:35`、`12:40` 等時間。
+因此，如果你希望週一到週五台灣時間晚上 20:30 開始分批掃描，在 `cron.schedule` 裡要填 UTC 的 `12:30`、`12:35`、`12:40` 等時間，並使用 `1-5` 指定週一到週五。
 
 ## 啟用 `pg_cron` 與 `pg_net`
 
@@ -63,16 +63,18 @@ create extension if not exists pg_net with schema extensions;
 
 如果你的專案已經啟用過，重複執行也不會重新建立。
 
-## 建立每天分批掃描排程
+## 建立週一到週五分批掃描排程
 
-以下範例會每天依「台灣時間」20:30～20:55，每 5 分鐘呼叫一次 `run-auto-scan`，分別掃描 `batch=0` 到 `batch=5`。
+以下範例會在週一到週五依「台灣時間」20:30～20:55，每 5 分鐘呼叫一次 `run-auto-scan`，分別掃描 `batch=0` 到 `batch=5`。
 
 > 請將 `<PROJECT_REF>`、`<AUTO_SCAN_SECRET>`、`<SUPABASE_ANON_KEY>` 換成你的實際設定。SQL 範例沒有也不應包含真實 Telegram token。
+
+> 若 batch 掃描時間較長，可視情況提高 `timeout_milliseconds`，避免請求在 Edge Function 完成前逾時。
 
 ```sql
 select cron.schedule(
   'stockdash-auto-scan-batch-0-tw-2030',
-  '30 12 * * *',
+  '30 12 * * 1-5',
   $$
   select net.http_get(
     url := 'https://<PROJECT_REF>.supabase.co/functions/v1/run-auto-scan?secret=<AUTO_SCAN_SECRET>&batch=0',
@@ -80,14 +82,14 @@ select cron.schedule(
       'Authorization', 'Bearer <SUPABASE_ANON_KEY>',
       'apikey', '<SUPABASE_ANON_KEY>'
     ),
-    timeout_milliseconds := 10000
+    timeout_milliseconds := 30000
   );
   $$
 );
 
 select cron.schedule(
   'stockdash-auto-scan-batch-1-tw-2035',
-  '35 12 * * *',
+  '35 12 * * 1-5',
   $$
   select net.http_get(
     url := 'https://<PROJECT_REF>.supabase.co/functions/v1/run-auto-scan?secret=<AUTO_SCAN_SECRET>&batch=1',
@@ -95,14 +97,14 @@ select cron.schedule(
       'Authorization', 'Bearer <SUPABASE_ANON_KEY>',
       'apikey', '<SUPABASE_ANON_KEY>'
     ),
-    timeout_milliseconds := 10000
+    timeout_milliseconds := 30000
   );
   $$
 );
 
 select cron.schedule(
   'stockdash-auto-scan-batch-2-tw-2040',
-  '40 12 * * *',
+  '40 12 * * 1-5',
   $$
   select net.http_get(
     url := 'https://<PROJECT_REF>.supabase.co/functions/v1/run-auto-scan?secret=<AUTO_SCAN_SECRET>&batch=2',
@@ -110,14 +112,14 @@ select cron.schedule(
       'Authorization', 'Bearer <SUPABASE_ANON_KEY>',
       'apikey', '<SUPABASE_ANON_KEY>'
     ),
-    timeout_milliseconds := 10000
+    timeout_milliseconds := 30000
   );
   $$
 );
 
 select cron.schedule(
   'stockdash-auto-scan-batch-3-tw-2045',
-  '45 12 * * *',
+  '45 12 * * 1-5',
   $$
   select net.http_get(
     url := 'https://<PROJECT_REF>.supabase.co/functions/v1/run-auto-scan?secret=<AUTO_SCAN_SECRET>&batch=3',
@@ -125,14 +127,14 @@ select cron.schedule(
       'Authorization', 'Bearer <SUPABASE_ANON_KEY>',
       'apikey', '<SUPABASE_ANON_KEY>'
     ),
-    timeout_milliseconds := 10000
+    timeout_milliseconds := 30000
   );
   $$
 );
 
 select cron.schedule(
   'stockdash-auto-scan-batch-4-tw-2050',
-  '50 12 * * *',
+  '50 12 * * 1-5',
   $$
   select net.http_get(
     url := 'https://<PROJECT_REF>.supabase.co/functions/v1/run-auto-scan?secret=<AUTO_SCAN_SECRET>&batch=4',
@@ -140,14 +142,14 @@ select cron.schedule(
       'Authorization', 'Bearer <SUPABASE_ANON_KEY>',
       'apikey', '<SUPABASE_ANON_KEY>'
     ),
-    timeout_milliseconds := 10000
+    timeout_milliseconds := 30000
   );
   $$
 );
 
 select cron.schedule(
   'stockdash-auto-scan-batch-5-tw-2055',
-  '55 12 * * *',
+  '55 12 * * 1-5',
   $$
   select net.http_get(
     url := 'https://<PROJECT_REF>.supabase.co/functions/v1/run-auto-scan?secret=<AUTO_SCAN_SECRET>&batch=5',
@@ -155,7 +157,7 @@ select cron.schedule(
       'Authorization', 'Bearer <SUPABASE_ANON_KEY>',
       'apikey', '<SUPABASE_ANON_KEY>'
     ),
-    timeout_milliseconds := 10000
+    timeout_milliseconds := 30000
   );
   $$
 );
@@ -168,11 +170,11 @@ select cron.schedule(
 ```sql
 select cron.schedule(
   'stockdash-auto-scan-batch-0-tw-2030',
-  '30 12 * * *',
+  '30 12 * * 1-5',
   $$
   select net.http_get(
     url := 'https://<PROJECT_REF>.supabase.co/functions/v1/run-auto-scan?secret=<AUTO_SCAN_SECRET>&batch=0',
-    timeout_milliseconds := 10000
+    timeout_milliseconds := 30000
   );
   $$
 );
