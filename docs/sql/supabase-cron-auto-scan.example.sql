@@ -8,6 +8,11 @@
 --
 -- 時區說明：Supabase Cron 使用 UTC。
 -- 台灣時間 UTC+8：20:30～21:15 對應 UTC 12:30～13:15。
+--
+-- ⚠️ 重要提醒：若只是要建立排程，只需要執行下方的：
+--   1. create extension
+--   2. batch=0 到 batch=9 的 cron.schedule(...) 區塊
+-- 不要把整份檔案一次貼到 Supabase SQL Editor 執行，避免誤執行後方查詢、暫停或刪除範例。
 
 create extension if not exists pg_cron with schema extensions;
 create extension if not exists pg_net with schema extensions;
@@ -172,6 +177,11 @@ select cron.schedule(
   $$
 );
 
+-- ============================================================
+-- 以下為查詢 / 管理 / 刪除範例
+-- 請不要和上方建立排程 SQL 一起整份執行
+-- ============================================================
+
 -- 查詢 cron job 狀態
 select
   jobid,
@@ -199,16 +209,22 @@ where jobid in (
 order by start_time desc
 limit 100;
 
+-- ⚠️ 選用管理操作：以下 SQL 會暫停所有 StockDash auto-scan jobs。
+-- 確認要暫停排程時才執行。
 -- 暫停所有 StockDash auto-scan jobs
 update cron.job
 set active = false
 where jobname like 'stockdash-auto-scan-batch-%';
 
+-- ⚠️ 選用管理操作：以下 SQL 會重新啟用所有 StockDash auto-scan jobs。
+-- 確認要恢復排程時才執行。
 -- 重新啟用所有 StockDash auto-scan jobs
 update cron.job
 set active = true
 where jobname like 'stockdash-auto-scan-batch-%';
 
+-- ⚠️ 危險操作：以下 SQL 會刪除所有 StockDash auto-scan jobs。
+-- 請勿誤執行；只有在確定要移除排程時才執行。
 -- 刪除所有 StockDash auto-scan jobs
 select cron.unschedule(jobname)
 from cron.job
