@@ -23,10 +23,10 @@ select cron.schedule(
   '30 12 * * 1-5',
   $$
   select net.http_get(
-    url := 'https://<PROJECT_REF>.supabase.co/functions/v1/run-auto-scan?secret=<AUTO_SCAN_SECRET>&batch=0',
+    url := 'https://psoljdyspeupakhbhcsf.supabase.co/functions/v1/run-auto-scan?secret=stockdash_auto_scan_2026_rimuru2020998001&batch=0',
     headers := jsonb_build_object(
-      'Authorization', 'Bearer <SUPABASE_ANON_KEY>',
-      'apikey', '<SUPABASE_ANON_KEY>'
+      'Authorization', 'Bearer sb_publishable_-t5jECTRA9BpwvqRHoUUOA_uEYF4b5B',
+      'apikey', 'sb_publishable_-t5jECTRA9BpwvqRHoUUOA_uEYF4b5B'
     ),
     timeout_milliseconds := 30000
   );
@@ -39,10 +39,10 @@ select cron.schedule(
   '35 12 * * 1-5',
   $$
   select net.http_get(
-    url := 'https://<PROJECT_REF>.supabase.co/functions/v1/run-auto-scan?secret=<AUTO_SCAN_SECRET>&batch=1',
+    url := 'https://psoljdyspeupakhbhcsf.supabase.co/functions/v1/run-auto-scan?secret=stockdash_auto_scan_2026_rimuru2020998001&batch=1',
     headers := jsonb_build_object(
-      'Authorization', 'Bearer <SUPABASE_ANON_KEY>',
-      'apikey', '<SUPABASE_ANON_KEY>'
+      'Authorization', 'Bearer sb_publishable_-t5jECTRA9BpwvqRHoUUOA_uEYF4b5B',
+      'apikey', 'sb_publishable_-t5jECTRA9BpwvqRHoUUOA_uEYF4b5B'
     ),
     timeout_milliseconds := 30000
   );
@@ -55,10 +55,10 @@ select cron.schedule(
   '40 12 * * 1-5',
   $$
   select net.http_get(
-    url := 'https://<PROJECT_REF>.supabase.co/functions/v1/run-auto-scan?secret=<AUTO_SCAN_SECRET>&batch=2',
+    url := 'https://psoljdyspeupakhbhcsf.supabase.co/functions/v1/run-auto-scan?secret=stockdash_auto_scan_2026_rimuru2020998001&batch=2',
     headers := jsonb_build_object(
-      'Authorization', 'Bearer <SUPABASE_ANON_KEY>',
-      'apikey', '<SUPABASE_ANON_KEY>'
+      'Authorization', 'Bearer sb_publishable_-t5jECTRA9BpwvqRHoUUOA_uEYF4b5B',
+      'apikey', 'sb_publishable_-t5jECTRA9BpwvqRHoUUOA_uEYF4b5B'
     ),
     timeout_milliseconds := 30000
   );
@@ -71,10 +71,10 @@ select cron.schedule(
   '45 12 * * 1-5',
   $$
   select net.http_get(
-    url := 'https://<PROJECT_REF>.supabase.co/functions/v1/run-auto-scan?secret=<AUTO_SCAN_SECRET>&batch=3',
+    url := 'https://psoljdyspeupakhbhcsf.supabase.co/functions/v1/run-auto-scan?secret=stockdash_auto_scan_2026_rimuru2020998001&batch=3',
     headers := jsonb_build_object(
-      'Authorization', 'Bearer <SUPABASE_ANON_KEY>',
-      'apikey', '<SUPABASE_ANON_KEY>'
+      'Authorization', 'Bearer sb_publishable_-t5jECTRA9BpwvqRHoUUOA_uEYF4b5B',
+      'apikey', 'sb_publishable_-t5jECTRA9BpwvqRHoUUOA_uEYF4b5B'
     ),
     timeout_milliseconds := 30000
   );
@@ -87,10 +87,10 @@ select cron.schedule(
   '50 12 * * 1-5',
   $$
   select net.http_get(
-    url := 'https://<PROJECT_REF>.supabase.co/functions/v1/run-auto-scan?secret=<AUTO_SCAN_SECRET>&batch=4',
+    url := 'https://psoljdyspeupakhbhcsf.supabase.co/functions/v1/run-auto-scan?secret=stockdash_auto_scan_2026_rimuru2020998001&batch=4',
     headers := jsonb_build_object(
-      'Authorization', 'Bearer <SUPABASE_ANON_KEY>',
-      'apikey', '<SUPABASE_ANON_KEY>'
+      'Authorization', 'Bearer sb_publishable_-t5jECTRA9BpwvqRHoUUOA_uEYF4b5B',
+      'apikey', 'sb_publishable_-t5jECTRA9BpwvqRHoUUOA_uEYF4b5B'
     ),
     timeout_milliseconds := 30000
   );
@@ -103,10 +103,10 @@ select cron.schedule(
   '55 12 * * 1-5',
   $$
   select net.http_get(
-    url := 'https://<PROJECT_REF>.supabase.co/functions/v1/run-auto-scan?secret=<AUTO_SCAN_SECRET>&batch=5',
+    url := 'https://psoljdyspeupakhbhcsf.supabase.co/functions/v1/run-auto-scan?secret=stockdash_auto_scan_2026_rimuru2020998001&batch=5',
     headers := jsonb_build_object(
-      'Authorization', 'Bearer <SUPABASE_ANON_KEY>',
-      'apikey', '<SUPABASE_ANON_KEY>'
+      'Authorization', 'Bearer sb_publishable_-t5jECTRA9BpwvqRHoUUOA_uEYF4b5B',
+      'apikey', 'sb_publishable_-t5jECTRA9BpwvqRHoUUOA_uEYF4b5B'
     ),
     timeout_milliseconds := 30000
   );
@@ -119,10 +119,10 @@ select cron.schedule(
   '0 13 * * 1-5',
   $$
   select net.http_get(
-    url := 'https://<PROJECT_REF>.supabase.co/functions/v1/run-auto-scan?secret=<AUTO_SCAN_SECRET>&batch=6',
+    url := 'hhttps://psoljdyspeupakhbhcsf.supabase.co/functions/v1/run-auto-scan?secret=stockdash_auto_scan_2026_rimuru2020998001&batch=6',
     headers := jsonb_build_object(
-      'Authorization', 'Bearer <SUPABASE_ANON_KEY>',
-      'apikey', '<SUPABASE_ANON_KEY>'
+      'Authorization', 'Bearer sb_publishable_-t5jECTRA9BpwvqRHoUUOA_uEYF4b5B',
+      'apikey', 'sb_publishable_-t5jECTRA9BpwvqRHoUUOA_uEYF4b5B'
     ),
     timeout_milliseconds := 30000
   );
@@ -135,10 +135,10 @@ select cron.schedule(
   '5 13 * * 1-5',
   $$
   select net.http_get(
-    url := 'https://<PROJECT_REF>.supabase.co/functions/v1/run-auto-scan?secret=<AUTO_SCAN_SECRET>&batch=7',
+    url := 'https://psoljdyspeupakhbhcsf.supabase.co/functions/v1/run-auto-scan?secret=stockdash_auto_scan_2026_rimuru2020998001&batch=7',
     headers := jsonb_build_object(
-      'Authorization', 'Bearer <SUPABASE_ANON_KEY>',
-      'apikey', '<SUPABASE_ANON_KEY>'
+      'Authorization', 'Bearer sb_publishable_-t5jECTRA9BpwvqRHoUUOA_uEYF4b5B',
+      'apikey', 'sb_publishable_-t5jECTRA9BpwvqRHoUUOA_uEYF4b5B'
     ),
     timeout_milliseconds := 30000
   );
@@ -151,10 +151,10 @@ select cron.schedule(
   '10 13 * * 1-5',
   $$
   select net.http_get(
-    url := 'https://<PROJECT_REF>.supabase.co/functions/v1/run-auto-scan?secret=<AUTO_SCAN_SECRET>&batch=8',
+    url := 'https://psoljdyspeupakhbhcsf.supabase.co/functions/v1/run-auto-scan?secret=stockdash_auto_scan_2026_rimuru2020998001&batch=8',
     headers := jsonb_build_object(
-      'Authorization', 'Bearer <SUPABASE_ANON_KEY>',
-      'apikey', '<SUPABASE_ANON_KEY>'
+      'Authorization', 'Bearer sb_publishable_-t5jECTRA9BpwvqRHoUUOA_uEYF4b5B',
+      'apikey', 'sb_publishable_-t5jECTRA9BpwvqRHoUUOA_uEYF4b5B'
     ),
     timeout_milliseconds := 30000
   );
@@ -167,10 +167,10 @@ select cron.schedule(
   '15 13 * * 1-5',
   $$
   select net.http_get(
-    url := 'https://<PROJECT_REF>.supabase.co/functions/v1/run-auto-scan?secret=<AUTO_SCAN_SECRET>&batch=9',
+    url := 'https://psoljdyspeupakhbhcsf.supabase.co/functions/v1/run-auto-scan?secret=stockdash_auto_scan_2026_rimuru2020998001&batch=9',
     headers := jsonb_build_object(
-      'Authorization', 'Bearer <SUPABASE_ANON_KEY>',
-      'apikey', '<SUPABASE_ANON_KEY>'
+      'Authorization', 'Bearer sb_publishable_-t5jECTRA9BpwvqRHoUUOA_uEYF4b5B',
+      'apikey', 'sb_publishable_-t5jECTRA9BpwvqRHoUUOA_uEYF4b5B'
     ),
     timeout_milliseconds := 30000
   );
