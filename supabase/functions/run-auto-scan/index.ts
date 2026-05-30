@@ -1,3 +1,4 @@
+
 export {};
 
 declare const Deno: {
@@ -33,6 +34,13 @@ type Candle = {
   low: number;
   close: number;
   volume: number;
+};
+
+type AlertGroupType = "strong" | "watch" | "risk";
+
+type RecentAlert = {
+  finalScore: number | null;
+  createdAt: string | null;
 };
 
 type ScanResult = {
@@ -73,6 +81,7 @@ const BATCH_SIZE = 10;
 const MAX_STRONG_ALERTS = 5;
 const MAX_WATCH_ALERTS = 6;
 const MAX_RISK_ALERTS = 2;
+const MAX_BATCH_TOP_ALERTS = 3;
 
 function getFunctionUrl(functionName: string) {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -82,6 +91,16 @@ function getFunctionUrl(functionName: string) {
   }
 
   return `${supabaseUrl.replace(/\/$/, "")}/functions/v1/${functionName}`;
+}
+
+function getRestUrl(path: string) {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+
+  if (!supabaseUrl) {
+    throw new Error("Missing SUPABASE_URL");
+  }
+
+  return `${supabaseUrl.replace(/\/$/, "")}/rest/v1/${path}`;
 }
 
 function getHeaders() {
@@ -97,6 +116,22 @@ function getHeaders() {
   }
 
   return headers;
+}
+
+function getDatabaseHeaders() {
+  const apiKey =
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ||
+    Deno.env.get("SUPABASE_ANON_KEY");
+
+  if (!apiKey) {
+    throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY");
+  }
+
+  return {
+    "Content-Type": "application/json",
+    apikey: apiKey,
+    Authorization: `Bearer ${apiKey}`,
+  };
 }
 
 function cleanSymbol(symbol: string) {
@@ -681,8 +716,27 @@ function buildResult(args: {
   } satisfies ScanResult;
 }
 
-function splitAlertGroups(results: ScanResult[]) {
+function shouldIncludeRecentAlert(
+  result: ScanResult,
+  recentAlerts: Map<string, RecentAlert>,
+) {
+  const recent = recentAlerts.get(result.symbol);
+
+  if (!recent) return true;
+  if (recent.finalScore === null || !Number.isFinite(recent.finalScore)) {
+    return false;
+  }
+
+  return result.finalScore >= recent.finalScore + 5;
+}
+
+function splitAlertGroups(
+  results: ScanResult[],
+  recentAlerts = new Map<string, RecentAlert>(),
+) {
   const sorted = results.slice().sort((a, b) => b.finalScore - a.finalScore);
+
+  const batchTop = sorted.slice(0, MAX_BATCH_TOP_ALERTS);
 
   const strong = sorted
     .filter(
@@ -692,6 +746,7 @@ function splitAlertGroups(results: ScanResult[]) {
         r.riskLevel !== "極高" &&
         ((r.holderScore ?? 0) >= 18 || (r.revenueScore ?? 0) >= 18),
     )
+    .filter((r) => shouldIncludeRecentAlert(r, recentAlerts))
     .slice(0, MAX_STRONG_ALERTS);
 
   const strongKeys = new Set(strong.map((r) => r.symbol));
@@ -706,6 +761,7 @@ function splitAlertGroups(results: ScanResult[]) {
         ) &&
         r.riskLevel !== "極高",
     )
+    .filter((r) => shouldIncludeRecentAlert(r, recentAlerts))
     .slice(0, MAX_WATCH_ALERTS);
 
   const usedKeys = new Set([...strong, ...watch].map((r) => r.symbol));
@@ -719,13 +775,118 @@ function splitAlertGroups(results: ScanResult[]) {
             ["RSI過熱", "20日急漲", "遠離年低", "位階偏高"].includes(flag),
           )),
     )
+    .filter((r) => shouldIncludeRecentAlert(r, recentAlerts))
     .slice(0, MAX_RISK_ALERTS);
 
   return {
+    batchTop,
     strong,
     watch,
     risk,
   };
+}
+
+async function fetchRecentAlertHistory(symbols: string[]) {
+  const uniqueSymbols = Array.from(
+    new Set(symbols.map(cleanSymbol).filter(Boolean)),
+  );
+  const recentAlerts = new Map<string, RecentAlert>();
+
+  if (uniqueSymbols.length === 0) return recentAlerts;
+
+  try {
+    const since = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    const inSymbols = uniqueSymbols.join(",");
+    const url = new URL(getRestUrl("alert_history"));
+
+    url.searchParams.set("select", "symbol,final_score,created_at");
+    url.searchParams.set("symbol", `in.(${inSymbols})`);
+    url.searchParams.set("created_at", `gte.${since}`);
+    url.searchParams.set("order", "created_at.desc");
+
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: getDatabaseHeaders(),
+    });
+
+    const rows = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      console.warn("alert_history recent lookup failed", rows);
+      return recentAlerts;
+    }
+
+    if (!Array.isArray(rows)) return recentAlerts;
+
+    rows.forEach((row: any) => {
+      const symbol = cleanSymbol(row?.symbol || "");
+
+      if (!symbol || recentAlerts.has(symbol)) return;
+
+      recentAlerts.set(symbol, {
+        finalScore:
+          row?.final_score === null || row?.final_score === undefined
+            ? null
+            : Number(row.final_score),
+        createdAt:
+          row?.created_at === null || row?.created_at === undefined
+            ? null
+            : String(row.created_at),
+      });
+    });
+  } catch (error) {
+    console.warn(
+      "alert_history recent lookup skipped",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
+  return recentAlerts;
+}
+
+async function writeAlertHistory(
+  groups: ReturnType<typeof splitAlertGroups>,
+  batch: number,
+) {
+  const groupEntries: Array<[AlertGroupType, ScanResult[]]> = [
+    ["strong", groups.strong],
+    ["watch", groups.watch],
+    ["risk", groups.risk],
+  ];
+
+  const rows = groupEntries.flatMap(([alertType, results]) =>
+    results.map((result) => ({
+      symbol: result.symbol,
+      name: result.name,
+      final_category: result.finalCategory,
+      final_score: result.finalScore,
+      alert_type: alertType,
+      batch,
+    })),
+  );
+
+  if (rows.length === 0) return;
+
+  try {
+    const response = await fetch(getRestUrl("alert_history"), {
+      method: "POST",
+      headers: {
+        ...getDatabaseHeaders(),
+        Prefer: "return=minimal",
+      },
+      body: JSON.stringify(rows),
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      console.warn("alert_history insert failed", response.status, text);
+    }
+  } catch (error) {
+    console.warn(
+      "alert_history insert skipped",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 }
 
 function formatPercent(value: number | null | undefined) {
@@ -764,6 +925,11 @@ function buildTelegramReport(args: {
     timeZone: "Asia/Taipei",
   });
 
+  const batchTopText =
+    args.groups.batchTop.length > 0
+      ? args.groups.batchTop.map(formatStockLine).join("\n\n")
+      : "無";
+
   const strongText =
     args.groups.strong.length > 0
       ? args.groups.strong.map(formatStockLine).join("\n\n")
@@ -784,6 +950,9 @@ function buildTelegramReport(args: {
     `時間：${now}`,
     `批次：batch ${args.batch}｜範圍：第 ${args.startIndex}～${args.endIndex} 支 / 共 ${args.totalPoolCount} 支`,
     `掃描：${args.scannedCount} 支｜成功：${args.successCount}｜略過：${args.skippedCount}`,
+    ``,
+    `【本批最高分 Top ${MAX_BATCH_TOP_ALERTS}】`,
+    batchTopText,
     ``,
     `【強力候選】最多 ${MAX_STRONG_ALERTS} 支`,
     strongText,
@@ -890,7 +1059,10 @@ async function runAutoScan(batch = 0) {
     await new Promise((resolve) => setTimeout(resolve, 120));
   }
 
-  const groups = splitAlertGroups(results);
+  const recentAlerts = await fetchRecentAlertHistory(
+    results.map((result) => result.symbol),
+  );
+  const groups = splitAlertGroups(results, recentAlerts);
   const report = buildTelegramReport({
     batch: safeBatch,
     startIndex: stocks.length > 0 ? start + 1 : start,
@@ -903,6 +1075,8 @@ async function runAutoScan(batch = 0) {
   });
 
   const telegramResult = await sendTelegramMessage(report);
+
+  await writeAlertHistory(groups, safeBatch);
 
   return {
     stocks,
