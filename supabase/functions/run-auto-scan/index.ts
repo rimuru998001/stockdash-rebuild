@@ -227,7 +227,70 @@ async function fetchJson(functionName: string, params: Record<string, string> = 
   return json;
 }
 
+function normalizeHotPoolStock(item: any): Stock | null {
+  const symbol = cleanSymbol(item?.symbol || item?.code || item?.代號 || "");
+  const name = String(
+    item?.name ||
+      item?.stockName ||
+      item?.名稱 ||
+      item?.股票名稱 ||
+      item?.公司名稱 ||
+      item?.symbol ||
+      symbol,
+  ).trim();
+
+  if (!symbol) return null;
+
+  return {
+    symbol,
+    name: name || symbol,
+  };
+}
+
+async function fetchCachedHotPool() {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const url = new URL(getRestUrl("hot_pool_cache"));
+
+    url.searchParams.set("select", "symbol,name,rank");
+    url.searchParams.set("pool_date", `eq.${today}`);
+    url.searchParams.set("order", "rank.asc");
+
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: getDatabaseHeaders(),
+    });
+
+    const rows = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      console.warn("hot_pool_cache lookup failed", rows);
+      return null;
+    }
+
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+
+    const stocks = rows
+      .map(normalizeHotPoolStock)
+      .filter((item: Stock | null): item is Stock => Boolean(item));
+
+    return stocks.length > 0 ? stocks : null;
+  } catch (error) {
+    console.warn(
+      "hot_pool_cache lookup skipped",
+      error instanceof Error ? error.message : String(error),
+    );
+    return null;
+  }
+}
+
 async function fetchHotPool() {
+  const cachedStocks = await fetchCachedHotPool();
+
+  if (cachedStocks && cachedStocks.length > 0) {
+    return cachedStocks;
+  }
+
   const json = await fetchJson("get-hot-stocks");
 
   const rawStocks = Array.isArray(json?.stocks)
@@ -237,19 +300,8 @@ async function fetchHotPool() {
       : [];
 
   const stocks: Stock[] = rawStocks
-    .map((item: any) => ({
-      symbol: cleanSymbol(item?.symbol || item?.code || item?.代號 || ""),
-      name: String(
-        item?.name ||
-          item?.stockName ||
-          item?.名稱 ||
-          item?.股票名稱 ||
-          item?.公司名稱 ||
-          item?.symbol ||
-          "",
-      ).trim(),
-    }))
-    .filter((item: Stock) => item.symbol);
+    .map(normalizeHotPoolStock)
+    .filter((item: Stock | null): item is Stock => Boolean(item));
 
   return stocks;
 }
