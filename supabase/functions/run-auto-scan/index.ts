@@ -1,3 +1,4 @@
+
 export {};
 
 declare const Deno: {
@@ -42,7 +43,6 @@ type StockAiAnalysis = {
 };
 
 type StockAiAnalysisMap = Record<string, StockAiAnalysis>;
-
 type AlertGroupType = "strong" | "watch" | "risk";
 
 type RecentAlert = {
@@ -1048,6 +1048,7 @@ async function fetchStockAiAnalysis(
   return normalizeAiAnalysis(json?.analysis);
 }
 
+<<<<<<< HEAD
 async function fetchAiAnalyses(groups: ReturnType<typeof splitAlertGroups>) {
   const autoScanSecret = Deno.env.get("AUTO_SCAN_SECRET");
   const analyses: StockAiAnalysisMap = {};
@@ -1113,6 +1114,7 @@ function buildTelegramReport(args: {
             formatStockLine(
               result,
               index,
+              args.aiAnalyses?.[result.symbol],
               args.aiAnalyses?.[result.symbol],
             ),
           )
