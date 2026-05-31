@@ -243,12 +243,12 @@ Deno.serve(async (req: Request) => {
       },
     );
   } catch (error) {
+    console.error("update-hot-pool Edge Function error", error);
     return new Response(
       JSON.stringify({
         success: false,
         functionVersion: "update-hot-pool-v1",
         message: "update-hot-pool Edge Function error",
-        error: error instanceof Error ? error.message : String(error),
       }),
       {
         status: 200,
