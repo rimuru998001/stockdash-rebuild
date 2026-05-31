@@ -1,3 +1,4 @@
+
 export {};
 
 declare const Deno: {
@@ -42,7 +43,6 @@ type StockAiAnalysis = {
 };
 
 type StockAiAnalysisMap = Record<string, StockAiAnalysis>;
-
 type AlertGroupType = "strong" | "watch" | "risk";
 
 type RecentAlert = {
