@@ -36,6 +36,13 @@ type Candle = {
   volume: number;
 };
 
+type StockAiAnalysis = {
+  summary: string;
+  riskPoints: string[];
+  actionNote: string;
+};
+
+type StockAiAnalysisMap = Record<string, StockAiAnalysis>;
 type AlertGroupType = "strong" | "watch" | "risk";
 
 type RecentAlert = {
@@ -951,16 +958,121 @@ function formatNumber(value: number | null | undefined, digits = 1) {
   return value.toFixed(digits);
 }
 
-function formatStockLine(result: ScanResult, index: number) {
-  const reasons = result.reasons.slice(0, 3).join("；");
+function formatAiAnalysis(analysis: StockAiAnalysis | undefined) {
+  if (!analysis) return null;
+
+  const riskText = analysis.riskPoints.slice(0, 2).join("；");
 
   return [
+    `   AI簡評：`,
+    `   摘要：${analysis.summary || "-"}`,
+    `   風險：${riskText || "-"}`,
+    `   觀察：${analysis.actionNote || "-"}`,
+  ].join("\n");
+}
+
+function formatStockLine(
+  result: ScanResult,
+  index: number,
+  aiAnalysis?: StockAiAnalysis,
+) {
+  const reasons = result.reasons.slice(0, 3).join("；");
+  const lines = [
     `${index + 1}. ${result.symbol} ${result.name}`,
     `   類型：${result.finalCategory}｜總分：${result.finalScore}`,
     `   技術：${result.technicalScore}｜資金：${result.moneyFlowScore}｜營收：${result.revenueScore ?? "-"}/30｜籌碼：${result.holderScore ?? "-"}/30`,
     `   YoY：${formatPercent(result.revenueYoY)}｜大戶：${formatPercent(result.largeHolderRatio)}｜量比：${formatNumber(result.volumeRatio, 2)}x`,
     `   原因：${reasons || "-"}`,
-  ].join("\n");
+  ];
+
+  const aiText = formatAiAnalysis(aiAnalysis);
+
+  if (aiText) lines.push(aiText);
+
+  return lines.join("\n");
+}
+
+function normalizeAiAnalysis(value: any): StockAiAnalysis | null {
+  const summary = String(value?.summary || "").trim();
+  const riskPoints = Array.isArray(value?.riskPoints)
+    ? value.riskPoints.map((item: any) => String(item || "").trim()).filter(Boolean)
+    : [];
+  const actionNote = String(value?.actionNote || "").trim();
+
+  if (!summary && riskPoints.length === 0 && !actionNote) return null;
+
+  return {
+    summary,
+    riskPoints,
+    actionNote,
+  };
+}
+
+async function fetchStockAiAnalysis(
+  result: ScanResult,
+  autoScanSecret: string,
+) {
+  const url = new URL(getFunctionUrl("analyze-stock-ai"));
+  url.searchParams.set("secret", autoScanSecret);
+
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({
+      symbol: result.symbol,
+      name: result.name,
+      finalCategory: result.finalCategory,
+      finalScore: result.finalScore,
+      technicalScore: result.technicalScore,
+      moneyFlowScore: result.moneyFlowScore,
+      revenueScore: result.revenueScore,
+      holderScore: result.holderScore,
+      revenueYoY: result.revenueYoY,
+      cumulativeRevenueYoY: result.cumulativeRevenueYoY,
+      largeHolderRatio: result.largeHolderRatio,
+      volumeRatio: result.volumeRatio,
+      return20d: result.return20d,
+      riskLevel: result.riskLevel,
+      warningFlags: result.warningFlags,
+      reasons: result.reasons,
+    }),
+  });
+
+  const json = await response.json().catch(() => null);
+
+  if (!response.ok || !json?.success) {
+    console.warn("analyze-stock-ai skipped", result.symbol, response.status);
+    return null;
+  }
+
+  return normalizeAiAnalysis(json?.analysis);
+}
+
+async function fetchStrongAiAnalyses(groups: ReturnType<typeof splitAlertGroups>) {
+  const autoScanSecret = Deno.env.get("AUTO_SCAN_SECRET");
+  const analyses: StockAiAnalysisMap = {};
+
+  if (!autoScanSecret) return analyses;
+
+  const strongTargets = groups.strong.slice(0, 2);
+
+  await Promise.all(
+    strongTargets.map(async (result) => {
+      try {
+        const analysis = await fetchStockAiAnalysis(result, autoScanSecret);
+
+        if (analysis) analyses[result.symbol] = analysis;
+      } catch (error) {
+        console.warn(
+          "analyze-stock-ai failed",
+          result.symbol,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }),
+  );
+
+  return analyses;
 }
 
 function buildTelegramReport(args: {
@@ -972,6 +1084,7 @@ function buildTelegramReport(args: {
   successCount: number;
   skippedCount: number;
   groups: ReturnType<typeof splitAlertGroups>;
+  strongAiAnalyses?: StockAiAnalysisMap;
 }) {
   const now = new Date().toLocaleString("zh-TW", {
     timeZone: "Asia/Taipei",
@@ -979,22 +1092,36 @@ function buildTelegramReport(args: {
 
   const batchTopText =
     args.groups.batchTop.length > 0
-      ? args.groups.batchTop.map(formatStockLine).join("\n\n")
+      ? args.groups.batchTop
+          .map((result, index) => formatStockLine(result, index))
+          .join("\n\n")
       : "無";
 
   const strongText =
     args.groups.strong.length > 0
-      ? args.groups.strong.map(formatStockLine).join("\n\n")
+      ? args.groups.strong
+          .map((result, index) =>
+            formatStockLine(
+              result,
+              index,
+              args.strongAiAnalyses?.[result.symbol],
+            ),
+          )
+          .join("\n\n")
       : "無";
 
   const watchText =
     args.groups.watch.length > 0
-      ? args.groups.watch.map(formatStockLine).join("\n\n")
+      ? args.groups.watch
+          .map((result, index) => formatStockLine(result, index))
+          .join("\n\n")
       : "無";
 
   const riskText =
     args.groups.risk.length > 0
-      ? args.groups.risk.map(formatStockLine).join("\n\n")
+      ? args.groups.risk
+          .map((result, index) => formatStockLine(result, index))
+          .join("\n\n")
       : "無";
 
   return [
@@ -1115,6 +1242,7 @@ async function runAutoScan(batch = 0) {
     results.map((result) => result.symbol),
   );
   const groups = splitAlertGroups(results, recentAlerts);
+  const strongAiAnalyses = await fetchStrongAiAnalyses(groups);
   const report = buildTelegramReport({
     batch: safeBatch,
     startIndex: stocks.length > 0 ? start + 1 : start,
@@ -1124,6 +1252,7 @@ async function runAutoScan(batch = 0) {
     successCount,
     skippedCount,
     groups,
+    strongAiAnalyses,
   });
 
   const telegramResult = await sendTelegramMessage(report);
