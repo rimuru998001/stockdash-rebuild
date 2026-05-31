@@ -2,6 +2,7 @@ import type { Candle, Stock, StockDataResponse } from "./types";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+const AUTO_SCAN_SECRET = import.meta.env.VITE_AUTO_SCAN_SECRET as string | undefined;
 
 function getFunctionUrl(functionName: string) {
   if (!SUPABASE_URL) {
@@ -461,4 +462,76 @@ export async function sendStockAlert(payload: StockAlertPayload) {
   }
 
   return json;
+}
+
+export type StockAiAnalysisInput = {
+  symbol?: string;
+  name?: string;
+  finalCategory?: string;
+  finalScore?: number;
+  technicalScore?: number;
+  moneyFlowScore?: number | null;
+  revenueScore?: number | null;
+  holderScore?: number | null;
+  revenueYoY?: number | null;
+  cumulativeRevenueYoY?: number | null;
+  largeHolderRatio?: number | null;
+  volumeRatio?: number | null;
+  return20d?: number | null;
+  riskLevel?: string;
+  warningFlags?: string[];
+  reasons?: string[];
+};
+
+export type StockAiAnalysis = {
+  summary: string;
+  bullishPoints: string[];
+  riskPoints: string[];
+  actionNote: string;
+};
+
+export type StockAiAnalysisResponse = {
+  success: boolean;
+  functionVersion?: string;
+  input?: StockAiAnalysisInput;
+  analysis?: StockAiAnalysis;
+  rawText?: string;
+  message?: string;
+};
+
+export async function analyzeStockWithAI(
+  input: StockAiAnalysisInput
+): Promise<StockAiAnalysisResponse> {
+  if (!AUTO_SCAN_SECRET) {
+    throw new Error("尚未設定 VITE_AUTO_SCAN_SECRET");
+  }
+
+  if (!SUPABASE_ANON_KEY) {
+    throw new Error("尚未設定 VITE_SUPABASE_ANON_KEY");
+  }
+
+  const url = new URL(getFunctionUrl("analyze-stock-ai"));
+  url.searchParams.set("secret", AUTO_SCAN_SECRET);
+
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify(input),
+  });
+
+  const text = await response.text();
+
+  let json: any;
+
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`AI分析回傳格式錯誤：${text.slice(0, 120)}`);
+  }
+
+  if (!response.ok || json?.success === false) {
+    throw new Error(json?.message || json?.error || `AI分析失敗 HTTP ${response.status}`);
+  }
+
+  return json as StockAiAnalysisResponse;
 }
