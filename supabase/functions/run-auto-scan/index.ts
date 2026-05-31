@@ -35,6 +35,21 @@ type Candle = {
   volume: number;
 };
 
+type StockAiAnalysis = {
+  summary: string;
+  riskPoints: string[];
+  actionNote: string;
+};
+
+type StockAiAnalysisMap = Record<string, StockAiAnalysis>;
+
+type AlertGroupType = "strong" | "watch" | "risk";
+
+type RecentAlert = {
+  finalScore: number | null;
+  createdAt: string | null;
+};
+
 type ScanResult = {
   symbol: string;
   name: string;
@@ -73,6 +88,7 @@ const BATCH_SIZE = 10;
 const MAX_STRONG_ALERTS = 5;
 const MAX_WATCH_ALERTS = 6;
 const MAX_RISK_ALERTS = 2;
+const MAX_BATCH_TOP_ALERTS = 3;
 
 function getFunctionUrl(functionName: string) {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -82,6 +98,16 @@ function getFunctionUrl(functionName: string) {
   }
 
   return `${supabaseUrl.replace(/\/$/, "")}/functions/v1/${functionName}`;
+}
+
+function getRestUrl(path: string) {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+
+  if (!supabaseUrl) {
+    throw new Error("Missing SUPABASE_URL");
+  }
+
+  return `${supabaseUrl.replace(/\/$/, "")}/rest/v1/${path}`;
 }
 
 function getHeaders() {
@@ -97,6 +123,22 @@ function getHeaders() {
   }
 
   return headers;
+}
+
+function getDatabaseHeaders() {
+  const apiKey =
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ||
+    Deno.env.get("SUPABASE_ANON_KEY");
+
+  if (!apiKey) {
+    throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY");
+  }
+
+  return {
+    "Content-Type": "application/json",
+    apikey: apiKey,
+    Authorization: `Bearer ${apiKey}`,
+  };
 }
 
 function cleanSymbol(symbol: string) {
@@ -192,7 +234,70 @@ async function fetchJson(functionName: string, params: Record<string, string> = 
   return json;
 }
 
+function normalizeHotPoolStock(item: any): Stock | null {
+  const symbol = cleanSymbol(item?.symbol || item?.code || item?.代號 || "");
+  const name = String(
+    item?.name ||
+      item?.stockName ||
+      item?.名稱 ||
+      item?.股票名稱 ||
+      item?.公司名稱 ||
+      item?.symbol ||
+      symbol,
+  ).trim();
+
+  if (!symbol) return null;
+
+  return {
+    symbol,
+    name: name || symbol,
+  };
+}
+
+async function fetchCachedHotPool() {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const url = new URL(getRestUrl("hot_pool_cache"));
+
+    url.searchParams.set("select", "symbol,name,rank");
+    url.searchParams.set("pool_date", `eq.${today}`);
+    url.searchParams.set("order", "rank.asc");
+
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: getDatabaseHeaders(),
+    });
+
+    const rows = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      console.warn("hot_pool_cache lookup failed", rows);
+      return null;
+    }
+
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+
+    const stocks = rows
+      .map(normalizeHotPoolStock)
+      .filter((item: Stock | null): item is Stock => Boolean(item));
+
+    return stocks.length > 0 ? stocks : null;
+  } catch (error) {
+    console.warn(
+      "hot_pool_cache lookup skipped",
+      error instanceof Error ? error.message : String(error),
+    );
+    return null;
+  }
+}
+
 async function fetchHotPool() {
+  const cachedStocks = await fetchCachedHotPool();
+
+  if (cachedStocks && cachedStocks.length > 0) {
+    return cachedStocks;
+  }
+
   const json = await fetchJson("get-hot-stocks");
 
   const rawStocks = Array.isArray(json?.stocks)
@@ -202,19 +307,8 @@ async function fetchHotPool() {
       : [];
 
   const stocks: Stock[] = rawStocks
-    .map((item: any) => ({
-      symbol: cleanSymbol(item?.symbol || item?.code || item?.代號 || ""),
-      name: String(
-        item?.name ||
-          item?.stockName ||
-          item?.名稱 ||
-          item?.股票名稱 ||
-          item?.公司名稱 ||
-          item?.symbol ||
-          "",
-      ).trim(),
-    }))
-    .filter((item: Stock) => item.symbol);
+    .map(normalizeHotPoolStock)
+    .filter((item: Stock | null): item is Stock => Boolean(item));
 
   return stocks;
 }
@@ -681,8 +775,27 @@ function buildResult(args: {
   } satisfies ScanResult;
 }
 
-function splitAlertGroups(results: ScanResult[]) {
+function shouldIncludeRecentAlert(
+  result: ScanResult,
+  recentAlerts: Map<string, RecentAlert>,
+) {
+  const recent = recentAlerts.get(result.symbol);
+
+  if (!recent) return true;
+  if (recent.finalScore === null || !Number.isFinite(recent.finalScore)) {
+    return false;
+  }
+
+  return result.finalScore >= recent.finalScore + 5;
+}
+
+function splitAlertGroups(
+  results: ScanResult[],
+  recentAlerts = new Map<string, RecentAlert>(),
+) {
   const sorted = results.slice().sort((a, b) => b.finalScore - a.finalScore);
+
+  const batchTop = sorted.slice(0, MAX_BATCH_TOP_ALERTS);
 
   const strong = sorted
     .filter(
@@ -692,6 +805,7 @@ function splitAlertGroups(results: ScanResult[]) {
         r.riskLevel !== "極高" &&
         ((r.holderScore ?? 0) >= 18 || (r.revenueScore ?? 0) >= 18),
     )
+    .filter((r) => shouldIncludeRecentAlert(r, recentAlerts))
     .slice(0, MAX_STRONG_ALERTS);
 
   const strongKeys = new Set(strong.map((r) => r.symbol));
@@ -706,6 +820,7 @@ function splitAlertGroups(results: ScanResult[]) {
         ) &&
         r.riskLevel !== "極高",
     )
+    .filter((r) => shouldIncludeRecentAlert(r, recentAlerts))
     .slice(0, MAX_WATCH_ALERTS);
 
   const usedKeys = new Set([...strong, ...watch].map((r) => r.symbol));
@@ -719,13 +834,118 @@ function splitAlertGroups(results: ScanResult[]) {
             ["RSI過熱", "20日急漲", "遠離年低", "位階偏高"].includes(flag),
           )),
     )
+    .filter((r) => shouldIncludeRecentAlert(r, recentAlerts))
     .slice(0, MAX_RISK_ALERTS);
 
   return {
+    batchTop,
     strong,
     watch,
     risk,
   };
+}
+
+async function fetchRecentAlertHistory(symbols: string[]) {
+  const uniqueSymbols = Array.from(
+    new Set(symbols.map(cleanSymbol).filter(Boolean)),
+  );
+  const recentAlerts = new Map<string, RecentAlert>();
+
+  if (uniqueSymbols.length === 0) return recentAlerts;
+
+  try {
+    const since = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    const inSymbols = uniqueSymbols.join(",");
+    const url = new URL(getRestUrl("alert_history"));
+
+    url.searchParams.set("select", "symbol,final_score,created_at");
+    url.searchParams.set("symbol", `in.(${inSymbols})`);
+    url.searchParams.set("created_at", `gte.${since}`);
+    url.searchParams.set("order", "created_at.desc");
+
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: getDatabaseHeaders(),
+    });
+
+    const rows = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      console.warn("alert_history recent lookup failed", rows);
+      return recentAlerts;
+    }
+
+    if (!Array.isArray(rows)) return recentAlerts;
+
+    rows.forEach((row: any) => {
+      const symbol = cleanSymbol(row?.symbol || "");
+
+      if (!symbol || recentAlerts.has(symbol)) return;
+
+      recentAlerts.set(symbol, {
+        finalScore:
+          row?.final_score === null || row?.final_score === undefined
+            ? null
+            : Number(row.final_score),
+        createdAt:
+          row?.created_at === null || row?.created_at === undefined
+            ? null
+            : String(row.created_at),
+      });
+    });
+  } catch (error) {
+    console.warn(
+      "alert_history recent lookup skipped",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
+  return recentAlerts;
+}
+
+async function writeAlertHistory(
+  groups: ReturnType<typeof splitAlertGroups>,
+  batch: number,
+) {
+  const groupEntries: Array<[AlertGroupType, ScanResult[]]> = [
+    ["strong", groups.strong],
+    ["watch", groups.watch],
+    ["risk", groups.risk],
+  ];
+
+  const rows = groupEntries.flatMap(([alertType, results]) =>
+    results.map((result) => ({
+      symbol: result.symbol,
+      name: result.name,
+      final_category: result.finalCategory,
+      final_score: result.finalScore,
+      alert_type: alertType,
+      batch,
+    })),
+  );
+
+  if (rows.length === 0) return;
+
+  try {
+    const response = await fetch(getRestUrl("alert_history"), {
+      method: "POST",
+      headers: {
+        ...getDatabaseHeaders(),
+        Prefer: "return=minimal",
+      },
+      body: JSON.stringify(rows),
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      console.warn("alert_history insert failed", response.status, text);
+    }
+  } catch (error) {
+    console.warn(
+      "alert_history insert skipped",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 }
 
 function formatPercent(value: number | null | undefined) {
@@ -738,16 +958,121 @@ function formatNumber(value: number | null | undefined, digits = 1) {
   return value.toFixed(digits);
 }
 
-function formatStockLine(result: ScanResult, index: number) {
-  const reasons = result.reasons.slice(0, 3).join("；");
+function formatAiAnalysis(analysis: StockAiAnalysis | undefined) {
+  if (!analysis) return null;
+
+  const riskText = analysis.riskPoints.slice(0, 2).join("；");
 
   return [
+    `   AI簡評：`,
+    `   摘要：${analysis.summary || "-"}`,
+    `   風險：${riskText || "-"}`,
+    `   觀察：${analysis.actionNote || "-"}`,
+  ].join("\n");
+}
+
+function formatStockLine(
+  result: ScanResult,
+  index: number,
+  aiAnalysis?: StockAiAnalysis,
+) {
+  const reasons = result.reasons.slice(0, 3).join("；");
+  const lines = [
     `${index + 1}. ${result.symbol} ${result.name}`,
     `   類型：${result.finalCategory}｜總分：${result.finalScore}`,
     `   技術：${result.technicalScore}｜資金：${result.moneyFlowScore}｜營收：${result.revenueScore ?? "-"}/30｜籌碼：${result.holderScore ?? "-"}/30`,
     `   YoY：${formatPercent(result.revenueYoY)}｜大戶：${formatPercent(result.largeHolderRatio)}｜量比：${formatNumber(result.volumeRatio, 2)}x`,
     `   原因：${reasons || "-"}`,
-  ].join("\n");
+  ];
+
+  const aiText = formatAiAnalysis(aiAnalysis);
+
+  if (aiText) lines.push(aiText);
+
+  return lines.join("\n");
+}
+
+function normalizeAiAnalysis(value: any): StockAiAnalysis | null {
+  const summary = String(value?.summary || "").trim();
+  const riskPoints = Array.isArray(value?.riskPoints)
+    ? value.riskPoints.map((item: any) => String(item || "").trim()).filter(Boolean)
+    : [];
+  const actionNote = String(value?.actionNote || "").trim();
+
+  if (!summary && riskPoints.length === 0 && !actionNote) return null;
+
+  return {
+    summary,
+    riskPoints,
+    actionNote,
+  };
+}
+
+async function fetchStockAiAnalysis(
+  result: ScanResult,
+  autoScanSecret: string,
+) {
+  const url = new URL(getFunctionUrl("analyze-stock-ai"));
+  url.searchParams.set("secret", autoScanSecret);
+
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({
+      symbol: result.symbol,
+      name: result.name,
+      finalCategory: result.finalCategory,
+      finalScore: result.finalScore,
+      technicalScore: result.technicalScore,
+      moneyFlowScore: result.moneyFlowScore,
+      revenueScore: result.revenueScore,
+      holderScore: result.holderScore,
+      revenueYoY: result.revenueYoY,
+      cumulativeRevenueYoY: result.cumulativeRevenueYoY,
+      largeHolderRatio: result.largeHolderRatio,
+      volumeRatio: result.volumeRatio,
+      return20d: result.return20d,
+      riskLevel: result.riskLevel,
+      warningFlags: result.warningFlags,
+      reasons: result.reasons,
+    }),
+  });
+
+  const json = await response.json().catch(() => null);
+
+  if (!response.ok || !json?.success) {
+    console.warn("analyze-stock-ai skipped", result.symbol, response.status);
+    return null;
+  }
+
+  return normalizeAiAnalysis(json?.analysis);
+}
+
+async function fetchStrongAiAnalyses(groups: ReturnType<typeof splitAlertGroups>) {
+  const autoScanSecret = Deno.env.get("AUTO_SCAN_SECRET");
+  const analyses: StockAiAnalysisMap = {};
+
+  if (!autoScanSecret) return analyses;
+
+  const strongTargets = groups.strong.slice(0, 2);
+
+  await Promise.all(
+    strongTargets.map(async (result) => {
+      try {
+        const analysis = await fetchStockAiAnalysis(result, autoScanSecret);
+
+        if (analysis) analyses[result.symbol] = analysis;
+      } catch (error) {
+        console.warn(
+          "analyze-stock-ai failed",
+          result.symbol,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }),
+  );
+
+  return analyses;
 }
 
 function buildTelegramReport(args: {
@@ -759,24 +1084,44 @@ function buildTelegramReport(args: {
   successCount: number;
   skippedCount: number;
   groups: ReturnType<typeof splitAlertGroups>;
+  strongAiAnalyses?: StockAiAnalysisMap;
 }) {
   const now = new Date().toLocaleString("zh-TW", {
     timeZone: "Asia/Taipei",
   });
 
+  const batchTopText =
+    args.groups.batchTop.length > 0
+      ? args.groups.batchTop
+          .map((result, index) => formatStockLine(result, index))
+          .join("\n\n")
+      : "無";
+
   const strongText =
     args.groups.strong.length > 0
-      ? args.groups.strong.map(formatStockLine).join("\n\n")
+      ? args.groups.strong
+          .map((result, index) =>
+            formatStockLine(
+              result,
+              index,
+              args.strongAiAnalyses?.[result.symbol],
+            ),
+          )
+          .join("\n\n")
       : "無";
 
   const watchText =
     args.groups.watch.length > 0
-      ? args.groups.watch.map(formatStockLine).join("\n\n")
+      ? args.groups.watch
+          .map((result, index) => formatStockLine(result, index))
+          .join("\n\n")
       : "無";
 
   const riskText =
     args.groups.risk.length > 0
-      ? args.groups.risk.map(formatStockLine).join("\n\n")
+      ? args.groups.risk
+          .map((result, index) => formatStockLine(result, index))
+          .join("\n\n")
       : "無";
 
   return [
@@ -784,6 +1129,9 @@ function buildTelegramReport(args: {
     `時間：${now}`,
     `批次：batch ${args.batch}｜範圍：第 ${args.startIndex}～${args.endIndex} 支 / 共 ${args.totalPoolCount} 支`,
     `掃描：${args.scannedCount} 支｜成功：${args.successCount}｜略過：${args.skippedCount}`,
+    ``,
+    `【本批最高分 Top ${MAX_BATCH_TOP_ALERTS}】`,
+    batchTopText,
     ``,
     `【強力候選】最多 ${MAX_STRONG_ALERTS} 支`,
     strongText,
@@ -890,7 +1238,11 @@ async function runAutoScan(batch = 0) {
     await new Promise((resolve) => setTimeout(resolve, 120));
   }
 
-  const groups = splitAlertGroups(results);
+  const recentAlerts = await fetchRecentAlertHistory(
+    results.map((result) => result.symbol),
+  );
+  const groups = splitAlertGroups(results, recentAlerts);
+  const strongAiAnalyses = await fetchStrongAiAnalyses(groups);
   const report = buildTelegramReport({
     batch: safeBatch,
     startIndex: stocks.length > 0 ? start + 1 : start,
@@ -900,9 +1252,12 @@ async function runAutoScan(batch = 0) {
     successCount,
     skippedCount,
     groups,
+    strongAiAnalyses,
   });
 
   const telegramResult = await sendTelegramMessage(report);
+
+  await writeAlertHistory(groups, safeBatch);
 
   return {
     stocks,
