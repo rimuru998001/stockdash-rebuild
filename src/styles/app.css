@@ -73,6 +73,30 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { border-bottom: 1px solid var(--border); padding: 10px 8px; text-align: left; white-space: nowrap; }
 th { color: var(--muted); background: #121923; }
 .reasonCell { white-space: normal; min-width: 240px; color: #cbd5e1; }
+
+.aiAnalysisRow td {
+  background: rgba(31, 111, 235, .08);
+  white-space: normal;
+}
+
+.aiAnalysisBox {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(125, 211, 252, .25);
+  border-radius: 10px;
+  background: rgba(8, 145, 178, .10);
+  color: #dbeafe;
+  padding: 12px;
+  line-height: 1.6;
+}
+
+.aiAnalysisBox p {
+  margin: 0;
+}
+
+.errorText {
+  color: #fecaca;
+}
 .chartBox { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 12px; margin: 18px 0 40px; min-height: 450px; }
 .emptyChart { color: var(--muted); min-height: 240px; display: grid; place-items: center; }
 @media (max-width: 1000px) {

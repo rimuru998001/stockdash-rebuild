@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import {
+  analyzeStockWithAI,
   fetchHolderData,
   fetchHotStocksFromEdge,
   fetchRevenueData,
@@ -18,6 +19,7 @@ import {
   saveHotPoolToStorage,
 } from "../lib/storage";
 import { supabase } from "../lib/supabaseClient";
+import type { StockAiAnalysis } from "../lib/api";
 import type { PoolKey, ScanResult, Stock } from "../lib/types";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -275,6 +277,9 @@ export function Scanner({ user }: { user: User | null }) {
   const [progress, setProgress] = useState("");
   const [results, setResults] = useState<ScanResult[]>([]);
   const [stats, setStats] = useState("");
+  const [aiAnalyses, setAiAnalyses] = useState<Record<string, StockAiAnalysis>>({});
+  const [aiLoading, setAiLoading] = useState<Record<string, boolean>>({});
+  const [aiErrors, setAiErrors] = useState<Record<string, string>>({});
 
   const getSelectedStockList = useMemo(() => {
     return () => {
@@ -468,6 +473,55 @@ export function Scanner({ user }: { user: User | null }) {
     }
   }
 
+  async function analyzeResultWithAI(result: ScanResult) {
+    if (aiAnalyses[result.symbol]) return;
+
+    setAiLoading((prev) => ({ ...prev, [result.symbol]: true }));
+    setAiErrors((prev) => {
+      const next = { ...prev };
+      delete next[result.symbol];
+      return next;
+    });
+
+    try {
+      const response = await analyzeStockWithAI({
+        symbol: result.symbol,
+        name: result.name,
+        finalCategory: result.finalCategory ?? result.category ?? undefined,
+        finalScore: result.finalScore ?? result.score,
+        technicalScore: result.technicalScore ?? result.score,
+        moneyFlowScore: result.moneyFlowScore,
+        revenueScore: result.revenueScore,
+        holderScore: result.holderScore,
+        revenueYoY: result.revenueYoY,
+        cumulativeRevenueYoY: result.cumulativeRevenueYoY,
+        largeHolderRatio: result.largeHolderRatio,
+        volumeRatio: result.volumeRatio,
+        return20d: result.return20d,
+        riskLevel: result.riskLevel,
+        warningFlags: result.warningFlags || [],
+        reasons: result.reasons.slice(0, 8),
+      });
+
+      if (!response.analysis) {
+        throw new Error("AI analysis missing");
+      }
+
+      setAiAnalyses((prev) => ({
+        ...prev,
+        [result.symbol]: response.analysis!,
+      }));
+    } catch (err) {
+      console.error("AI analysis failed", err);
+      setAiErrors((prev) => ({
+        ...prev,
+        [result.symbol]: "AI分析暫時無法取得",
+      }));
+    } finally {
+      setAiLoading((prev) => ({ ...prev, [result.symbol]: false }));
+    }
+  }
+
   async function scanStock(stock: Stock): Promise<ScanResult | null> {
     const data = await fetchStockData(stock.symbol, "1y");
 
@@ -630,6 +684,9 @@ export function Scanner({ user }: { user: User | null }) {
     setIsScanning(true);
     setResults([]);
     setStats("");
+    setAiAnalyses({});
+    setAiLoading({});
+    setAiErrors({});
 
     const scanned: ScanResult[] = [];
     let success = 0;
@@ -823,68 +880,131 @@ export function Scanner({ user }: { user: User | null }) {
               </thead>
 
               <tbody>
-                {results.map((r) => (
-                  <tr key={r.symbol}>
-                    <td>{r.symbol}</td>
-                    <td>{r.name}</td>
-                    <td>
-                      <b>{r.finalCategory ?? r.category ?? "-"}</b>
-                    </td>
-                    <td>{r.category ?? "-"}</td>
-                    <td>{r.riskLevel ?? "-"}</td>
-                    <td>{r.positionLabel ?? "-"}</td>
-                    <td>{formatNumber(r.close)}</td>
-                    <td>{formatNumber(r.ma20)}</td>
-                    <td>{formatNumber(r.rsi14, 1)}</td>
-                    <td>
-                      {r.volumeRatio ? `${r.volumeRatio.toFixed(2)}x` : "-"}
-                    </td>
-                    <td>{formatPercent(r.oneYearReturn)}</td>
-                    <td>{formatPercent(r.distanceFromLow52w)}</td>
-                    <td>{formatPercent(r.return20d)}</td>
-                    <td>{r.technicalScore ?? r.score}</td>
-                    <td>{r.moneyFlowScore ?? "-"}</td>
-                    <td>{r.revenueLevel ?? "-"}</td>
-                    <td>
-                      {r.revenueScore != null ? `${r.revenueScore}/30` : "-"}
-                    </td>
-                    <td>{r.holderLevel ?? "-"}</td>
-                    <td>
-                      {r.holderScore != null ? `${r.holderScore}/30` : "-"}
-                    </td>
-                    <td>{formatPercent(r.largeHolderRatio)}</td>
-                    <td>{formatPercent(r.whaleHolderRatio)}</td>
-                    <td>{formatPercent(r.retailHolderRatio)}</td>
-                    <td>{formatPercent(r.revenueYoY)}</td>
-                    <td>{formatPercent(r.cumulativeRevenueYoY)}</td>
-                    <td>
-                      <b>{r.finalScore ?? r.score}</b>
-                    </td>
-                    <td className="reasonCell">
-                      {r.warningFlags && r.warningFlags.length > 0
-                        ? r.warningFlags.join("、")
-                        : "-"}
-                    </td>
-                    <td className="reasonCell">{r.reasons.join("、")}</td>
-                    <td>
-                      <div className="buttonRow">
-                        <button
-                          className="small"
-                          onClick={() => addStockToCustomPool(r)}
-                        >
-                          加入自訂
-                        </button>
+                {results.map((r) => {
+                  const analysis = aiAnalyses[r.symbol];
+                  const isAiLoading = Boolean(aiLoading[r.symbol]);
+                  const aiError = aiErrors[r.symbol];
+                  const shouldShowAiRow = Boolean(analysis || isAiLoading || aiError);
 
-                        <button
-                          className="small secondary"
-                          onClick={() => sendAlertForStock(r)}
-                        >
-                          推播
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                  return (
+                    <Fragment key={r.symbol}>
+                      <tr>
+                        <td>{r.symbol}</td>
+                        <td>{r.name}</td>
+                        <td>
+                          <b>{r.finalCategory ?? r.category ?? "-"}</b>
+                        </td>
+                        <td>{r.category ?? "-"}</td>
+                        <td>{r.riskLevel ?? "-"}</td>
+                        <td>{r.positionLabel ?? "-"}</td>
+                        <td>{formatNumber(r.close)}</td>
+                        <td>{formatNumber(r.ma20)}</td>
+                        <td>{formatNumber(r.rsi14, 1)}</td>
+                        <td>
+                          {r.volumeRatio ? `${r.volumeRatio.toFixed(2)}x` : "-"}
+                        </td>
+                        <td>{formatPercent(r.oneYearReturn)}</td>
+                        <td>{formatPercent(r.distanceFromLow52w)}</td>
+                        <td>{formatPercent(r.return20d)}</td>
+                        <td>{r.technicalScore ?? r.score}</td>
+                        <td>{r.moneyFlowScore ?? "-"}</td>
+                        <td>{r.revenueLevel ?? "-"}</td>
+                        <td>
+                          {r.revenueScore != null ? `${r.revenueScore}/30` : "-"}
+                        </td>
+                        <td>{r.holderLevel ?? "-"}</td>
+                        <td>
+                          {r.holderScore != null ? `${r.holderScore}/30` : "-"}
+                        </td>
+                        <td>{formatPercent(r.largeHolderRatio)}</td>
+                        <td>{formatPercent(r.whaleHolderRatio)}</td>
+                        <td>{formatPercent(r.retailHolderRatio)}</td>
+                        <td>{formatPercent(r.revenueYoY)}</td>
+                        <td>{formatPercent(r.cumulativeRevenueYoY)}</td>
+                        <td>
+                          <b>{r.finalScore ?? r.score}</b>
+                        </td>
+                        <td className="reasonCell">
+                          {r.warningFlags && r.warningFlags.length > 0
+                            ? r.warningFlags.join("、")
+                            : "-"}
+                        </td>
+                        <td className="reasonCell">{r.reasons.join("、")}</td>
+                        <td>
+                          <div className="buttonRow">
+                            <button
+                              className="small"
+                              onClick={() => addStockToCustomPool(r)}
+                            >
+                              加入自訂
+                            </button>
+
+                            <button
+                              className="small secondary"
+                              onClick={() => sendAlertForStock(r)}
+                            >
+                              推播
+                            </button>
+
+                            <button
+                              className="small purple"
+                              onClick={() => analyzeResultWithAI(r)}
+                              disabled={isAiLoading || Boolean(analysis)}
+                            >
+                              {isAiLoading
+                                ? "AI分析中..."
+                                : analysis
+                                  ? "已AI分析"
+                                  : "✨ AI分析"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+
+                      {shouldShowAiRow && (
+                        <tr className="aiAnalysisRow">
+                          <td colSpan={28}>
+                            {isAiLoading && (
+                              <div className="aiAnalysisBox">AI分析中...</div>
+                            )}
+
+                            {aiError && !isAiLoading && (
+                              <div className="aiAnalysisBox errorText">{aiError}</div>
+                            )}
+
+                            {analysis && !isAiLoading && (
+                              <div className="aiAnalysisBox">
+                                <p>
+                                  <b>AI摘要：</b>
+                                  {analysis.summary}
+                                </p>
+
+                                <p>
+                                  <b>優點：</b>
+                                  {analysis.bullishPoints.length > 0
+                                    ? analysis.bullishPoints.join("、")
+                                    : "-"}
+                                </p>
+
+                                <p>
+                                  <b>風險：</b>
+                                  {analysis.riskPoints.length > 0
+                                    ? analysis.riskPoints.join("、")
+                                    : "-"}
+                                </p>
+
+                                <p>
+                                  <b>觀察建議：</b>
+                                  {analysis.actionNote}
+                                </p>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
