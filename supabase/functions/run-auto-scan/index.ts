@@ -1048,16 +1048,20 @@ async function fetchStockAiAnalysis(
   return normalizeAiAnalysis(json?.analysis);
 }
 
-async function fetchStrongAiAnalyses(groups: ReturnType<typeof splitAlertGroups>) {
+<<<<<<< HEAD
+async function fetchAiAnalyses(groups: ReturnType<typeof splitAlertGroups>) {
   const autoScanSecret = Deno.env.get("AUTO_SCAN_SECRET");
   const analyses: StockAiAnalysisMap = {};
 
   if (!autoScanSecret) return analyses;
 
-  const strongTargets = groups.strong.slice(0, 2);
+  const targets =
+    groups.strong.length > 0
+      ? groups.strong.slice(0, 2)
+      : groups.batchTop.slice(0, 1);
 
   await Promise.all(
-    strongTargets.map(async (result) => {
+    targets.map(async (result) => {
       try {
         const analysis = await fetchStockAiAnalysis(result, autoScanSecret);
 
@@ -1084,7 +1088,7 @@ function buildTelegramReport(args: {
   successCount: number;
   skippedCount: number;
   groups: ReturnType<typeof splitAlertGroups>;
-  strongAiAnalyses?: StockAiAnalysisMap;
+  aiAnalyses?: StockAiAnalysisMap;
 }) {
   const now = new Date().toLocaleString("zh-TW", {
     timeZone: "Asia/Taipei",
@@ -1093,7 +1097,13 @@ function buildTelegramReport(args: {
   const batchTopText =
     args.groups.batchTop.length > 0
       ? args.groups.batchTop
-          .map((result, index) => formatStockLine(result, index))
+          .map((result, index) =>
+            formatStockLine(
+              result,
+              index,
+              args.aiAnalyses?.[result.symbol],
+            ),
+          )
           .join("\n\n")
       : "無";
 
@@ -1104,7 +1114,8 @@ function buildTelegramReport(args: {
             formatStockLine(
               result,
               index,
-              args.strongAiAnalyses?.[result.symbol],
+              args.aiAnalyses?.[result.symbol],
+              args.aiAnalyses?.[result.symbol],
             ),
           )
           .join("\n\n")
@@ -1242,7 +1253,7 @@ async function runAutoScan(batch = 0) {
     results.map((result) => result.symbol),
   );
   const groups = splitAlertGroups(results, recentAlerts);
-  const strongAiAnalyses = await fetchStrongAiAnalyses(groups);
+  const aiAnalyses = await fetchAiAnalyses(groups);
   const report = buildTelegramReport({
     batch: safeBatch,
     startIndex: stocks.length > 0 ? start + 1 : start,
@@ -1252,7 +1263,7 @@ async function runAutoScan(batch = 0) {
     successCount,
     skippedCount,
     groups,
-    strongAiAnalyses,
+    aiAnalyses,
   });
 
   const telegramResult = await sendTelegramMessage(report);
